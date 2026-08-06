@@ -35,13 +35,13 @@ starting the agent:
 ```python
 from livekit.plugins import ai_coustics
 
-noise_cancellation = ai_coustics.audio_enhancement(
+noise_cancellation = ai_coustics.Processor(
     model="quail-vf-2.2-l-16khz",  # artifact ID, downloaded and cached
     model_parameters=ai_coustics.ModelParameters(enhancement_level=1.0),
 )
 
 # For offline deployment, pass an explicit file path instead:
-# noise_cancellation = ai_coustics.audio_enhancement(model="./models/quail.aicmodel")
+# noise_cancellation = ai_coustics.Processor(model="./models/quail.aicmodel")
 ```
 
 Pass `noise_cancellation` anywhere LiveKit accepts an
@@ -59,9 +59,9 @@ Install the package from `node/`, set `AIC_SDK_LICENSE`, and construct the filte
 the agent:
 
 ```ts
-import { audioEnhancement } from "@ai-coustics/livekit-agents";
+import { Processor } from "@ai-coustics/livekit-agents";
 
-const noiseCancellation = audioEnhancement({
+const noiseCancellation = new Processor({
   model: "quail-vf-2.2-l-16khz", // artifact ID, downloaded and cached
   modelParameters: { enhancementLevel: 1.0 },
 });

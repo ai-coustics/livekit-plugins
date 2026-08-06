@@ -5,12 +5,11 @@ export {
   type ProcessorContext,
 } from "./sdk.js";
 export {
-  AudioEnhancement,
-  audioEnhancement,
   float32ToPcm16,
   pcm16ToFloat32,
-  type AudioEnhancementParams,
   type ModelParameters,
+  Processor,
+  type ProcessorOptions,
 } from "./processor.js";
 export {
   DEFAULT_DOWNLOAD_DIR,

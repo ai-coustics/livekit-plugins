@@ -1,7 +1,7 @@
 import { AudioFrame } from "@livekit/rtc-node";
 import { describe, expect, it } from "vitest";
 
-import { audioEnhancement } from "../src/index.js";
+import { Processor } from "../src/index.js";
 
 const describeIf = process.env.AIC_SDK_LICENSE ? describe : describe.skip;
 const modelId =
@@ -28,7 +28,7 @@ function frame(index: number, channels = 1): AudioFrame {
 
 describeIf("native Processor integration", () => {
   it("processes 50 ms model-ID frames", () => {
-    const enhancer = audioEnhancement({ model: modelId });
+    const enhancer = new Processor({ model: modelId });
     const outputs = Array.from({ length: 40 }, (_, index) =>
       enhancer.process(frame(index)),
     );
@@ -45,7 +45,7 @@ describeIf("native Processor integration", () => {
   }, 120_000);
 
   it("supports stereo and runtime bypass updates", () => {
-    const enhancer = audioEnhancement({
+    const enhancer = new Processor({
       model: modelId,
       modelParameters: { bypass: true },
     });
@@ -56,4 +56,3 @@ describeIf("native Processor integration", () => {
     expect(output.samplesPerChannel).toBe(samplesPerFrame);
   }, 120_000);
 });
-

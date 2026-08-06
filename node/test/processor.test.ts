@@ -87,12 +87,12 @@ vi.mock("@ai-coustics/aic-sdk", () => ({
 }));
 
 import {
-  AudioEnhancement,
+  Processor,
   float32ToPcm16,
   pcm16ToFloat32,
 } from "../src/processor.js";
 
-describe("AudioEnhancement", () => {
+describe("Processor", () => {
   beforeEach(() => {
     sdk.instances.length = 0;
     sdk.FakeModel.fromFileCalls.length = 0;
@@ -101,7 +101,7 @@ describe("AudioEnhancement", () => {
   });
 
   it("constructs without a probe frame and processes one complete LiveKit frame", () => {
-    const enhancer = new AudioEnhancement({
+    const enhancer = new Processor({
       model: new sdk.FakeModel(),
       licenseKey: "test-license",
       modelParameters: { enhancementLevel: 0.75 },
@@ -131,7 +131,7 @@ describe("AudioEnhancement", () => {
     sdk.FakeProcessor.constructorError = sdkError;
 
     try {
-      new AudioEnhancement({
+      new Processor({
         model: new sdk.FakeModel(),
         licenseKey: "bad-license",
       });
@@ -146,7 +146,7 @@ describe("AudioEnhancement", () => {
   });
 
   it("reinitializes when any frame geometry changes", () => {
-    const enhancer = new AudioEnhancement({
+    const enhancer = new Processor({
       model: new sdk.FakeModel(),
       licenseKey: "test-license",
     });
@@ -164,7 +164,7 @@ describe("AudioEnhancement", () => {
   });
 
   it("merges, validates, and reapplies model parameters", () => {
-    const enhancer = new AudioEnhancement({
+    const enhancer = new Processor({
       model: new sdk.FakeModel(),
       licenseKey: "test-license",
       modelParameters: { bypass: true },
@@ -185,7 +185,7 @@ describe("AudioEnhancement", () => {
   });
 
   it("passes through while disabled and resets when re-enabled", () => {
-    const enhancer = new AudioEnhancement({
+    const enhancer = new Processor({
       model: new sdk.FakeModel(),
       licenseKey: "test-license",
     });
@@ -204,7 +204,7 @@ describe("AudioEnhancement", () => {
 
   it("deduplicates processing errors and releases on close", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const enhancer = new AudioEnhancement({
+    const enhancer = new Processor({
       model: new sdk.FakeModel(),
       licenseKey: "test-license",
     });
@@ -221,7 +221,7 @@ describe("AudioEnhancement", () => {
   });
 
   it("resolves model IDs through the cache and paths directly", () => {
-    new AudioEnhancement({
+    new Processor({
       model: "quail-vf-2.2-l-16khz",
       licenseKey: "test-license",
       downloadDir: "/tmp/aic-test-models",
@@ -233,7 +233,7 @@ describe("AudioEnhancement", () => {
       "/tmp/aic-test-models/quail-vf-2.2-l-16khz.aicmodel",
     );
 
-    new AudioEnhancement({
+    new Processor({
       model: "/models/local.aicmodel",
       licenseKey: "test-license",
     });

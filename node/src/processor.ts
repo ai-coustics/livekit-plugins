@@ -7,7 +7,7 @@ import {
 } from "./model.js";
 import {
   type OtelConfig,
-  Processor,
+  Processor as AicProcessor,
   type ProcessorContext,
   type ProcessorParameter,
   ProcessorParameter as ProcessorParameters,
@@ -20,7 +20,7 @@ export interface ModelParameters {
   bypass?: boolean;
 }
 
-export interface AudioEnhancementParams {
+export interface ProcessorOptions {
   /** SDK Model, artifact model ID, or local `.aicmodel` path. */
   model: ModelInput;
   licenseKey?: string;
@@ -53,8 +53,8 @@ export function float32ToPcm16(data: Float32Array): Int16Array {
 }
 
 /** LiveKit AudioFrame processor backed by the public ai-coustics SDK. */
-export class AudioEnhancement extends FrameProcessor<AudioFrame> {
-  private processor: InstanceType<typeof Processor> | null;
+export class Processor extends FrameProcessor<AudioFrame> {
+  private processor: InstanceType<typeof AicProcessor> | null;
   private context: ProcessorContext | null;
   private readonly parameters = new Map<ProcessorParameter, number>();
   private readonly modelParameters: ModelParameters;
@@ -64,18 +64,18 @@ export class AudioEnhancement extends FrameProcessor<AudioFrame> {
   private lastErrorMessage: string | null = null;
   private lastSlowWarning = 0;
 
-  constructor(params: AudioEnhancementParams) {
+  constructor(options: ProcessorOptions) {
     super();
-    const licenseKey = resolveLicenseKey(params.licenseKey);
+    const licenseKey = resolveLicenseKey(options.licenseKey);
     const model = loadModel(
-      params.model,
-      params.downloadDir ?? DEFAULT_DOWNLOAD_DIR,
+      options.model,
+      options.downloadDir ?? DEFAULT_DOWNLOAD_DIR,
     );
     try {
-      this.processor = new Processor(
+      this.processor = new AicProcessor(
         model,
         licenseKey,
-        params.otelConfig,
+        options.otelConfig,
       );
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -84,12 +84,12 @@ export class AudioEnhancement extends FrameProcessor<AudioFrame> {
       });
     }
     this.context = this.processor.getProcessorContext();
-    this.modelParameters = { ...params.modelParameters };
-    if (params.enhancementLevel !== undefined) {
-      this.modelParameters.enhancementLevel = params.enhancementLevel;
+    this.modelParameters = { ...options.modelParameters };
+    if (options.enhancementLevel !== undefined) {
+      this.modelParameters.enhancementLevel = options.enhancementLevel;
     }
-    if (params.bypass !== undefined) {
-      this.modelParameters.bypass = params.bypass;
+    if (options.bypass !== undefined) {
+      this.modelParameters.bypass = options.bypass;
     }
     this.updateModelParameters(this.modelParameters);
   }
@@ -239,8 +239,4 @@ export class AudioEnhancement extends FrameProcessor<AudioFrame> {
     this.lastErrorMessage = message;
     console.error(`ai-coustics processing failed; passing audio through: ${message}`);
   }
-}
-
-export function audioEnhancement(params: AudioEnhancementParams): AudioEnhancement {
-  return new AudioEnhancement(params);
 }

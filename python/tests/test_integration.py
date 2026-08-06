@@ -34,7 +34,7 @@ def _frame(index: int, *, channels: int = 1) -> rtc.AudioFrame:
 
 @pytest.mark.skipif(not LICENSE, reason="AIC_SDK_LICENSE is required")
 def test_real_processor_with_model_id_and_fifty_ms_frames() -> None:
-    enhancer = ai_coustics.audio_enhancement(model=MODEL_ID)
+    enhancer = ai_coustics.Processor(model=MODEL_ID)
     outputs = [enhancer._process(_frame(index)) for index in range(40)]
 
     assert all(output.samples_per_channel == SAMPLES_PER_FRAME for output in outputs)
@@ -51,7 +51,7 @@ def test_real_processor_with_model_id_and_fifty_ms_frames() -> None:
 
 @pytest.mark.skipif(not LICENSE, reason="AIC_SDK_LICENSE is required")
 def test_real_processor_stereo_and_runtime_parameters() -> None:
-    enhancer = ai_coustics.audio_enhancement(
+    enhancer = ai_coustics.Processor(
         model=MODEL_ID,
         model_parameters=ai_coustics.ModelParameters(bypass=True),
     )

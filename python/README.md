@@ -6,13 +6,13 @@ This package adapts `aic_sdk.Processor` to LiveKit's
 ```python
 from livekit.plugins import ai_coustics
 
-noise_cancellation = ai_coustics.audio_enhancement(
+noise_cancellation = ai_coustics.Processor(
     model="quail-vf-2.2-l-16khz",
     model_parameters=ai_coustics.ModelParameters(enhancement_level=1.0),
 )
 
 # An explicit .aicmodel path avoids network access at startup:
-# noise_cancellation = ai_coustics.audio_enhancement(model="./models/quail.aicmodel")
+# noise_cancellation = ai_coustics.Processor(model="./models/quail.aicmodel")
 ```
 
 Set `AIC_SDK_LICENSE` or pass `license_key=` explicitly. Artifact model IDs are downloaded and

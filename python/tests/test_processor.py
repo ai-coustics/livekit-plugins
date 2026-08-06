@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from livekit import rtc
-from livekit.plugins.ai_coustics import AudioEnhancement, ModelParameters
+from livekit.plugins.ai_coustics import ModelParameters, Processor
 
 
 @dataclass
@@ -90,8 +90,8 @@ def make_frame(
     )
 
 
-def create_enhancer(**kwargs: object) -> AudioEnhancement:
-    return AudioEnhancement(
+def create_enhancer(**kwargs: object) -> Processor:
+    return Processor(
         model=object(),  # type: ignore[arg-type]
         license_key="test-license",
         **kwargs,  # type: ignore[arg-type]
@@ -215,7 +215,7 @@ def test_close_releases_native_processor() -> None:
 def test_requires_license(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AIC_SDK_LICENSE", raising=False)
     with pytest.raises(ValueError, match="AIC_SDK_LICENSE"):
-        AudioEnhancement(model=object())  # type: ignore[arg-type]
+        Processor(model=object())  # type: ignore[arg-type]
 
 
 def test_model_id_download_and_path_loading() -> None:

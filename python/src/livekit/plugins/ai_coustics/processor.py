@@ -42,7 +42,7 @@ class ModelParameters:
     bypass: bool | None = None
 
 
-class AudioEnhancement(rtc.FrameProcessor[rtc.AudioFrame]):
+class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
     """LiveKit audio frame processor backed by :class:`aic_sdk.Processor`.
 
     Model resolution and Processor construction are eager, while SDK backend authentication uses
@@ -227,26 +227,3 @@ class AudioEnhancement(rtc.FrameProcessor[rtc.AudioFrame]):
         self._context = None
         self._processor = None
         self._format = None
-
-
-def audio_enhancement(
-    *,
-    model: ModelInput,
-    license_key: str | None = None,
-    model_parameters: ModelParameters | None = None,
-    enhancement_level: float | None = None,
-    bypass: bool | None = None,
-    download_dir: str | PathLike[str] | None = None,
-    otel_config: aic_sdk.OtelConfig | None = None,
-) -> AudioEnhancement:
-    """Create an ai-coustics noise cancellation frame processor."""
-
-    return AudioEnhancement(
-        model=model,
-        license_key=license_key,
-        model_parameters=model_parameters,
-        enhancement_level=enhancement_level,
-        bypass=bypass,
-        download_dir=download_dir,
-        otel_config=otel_config,
-    )

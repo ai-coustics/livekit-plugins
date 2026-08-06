@@ -4,15 +4,15 @@ This package adapts `@ai-coustics/aic-sdk`'s `Processor` to LiveKit's
 `FrameProcessor<AudioFrame>` interface.
 
 ```ts
-import { audioEnhancement } from "@ai-coustics/livekit-agents";
+import { Processor } from "@ai-coustics/livekit-agents";
 
-const noiseCancellation = audioEnhancement({
+const noiseCancellation = new Processor({
   model: "quail-vf-2.2-l-16khz",
   modelParameters: { enhancementLevel: 1.0 },
 });
 
 // An explicit .aicmodel path avoids network access at startup:
-// const noiseCancellation = audioEnhancement({ model: "./models/quail.aicmodel" });
+// const noiseCancellation = new Processor({ model: "./models/quail.aicmodel" });
 ```
 
 Set `AIC_SDK_LICENSE` or pass `licenseKey` explicitly. Artifact model IDs are downloaded and
