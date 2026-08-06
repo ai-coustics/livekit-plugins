@@ -10,12 +10,12 @@ import {
   Processor as AicProcessor,
   type ProcessorContext,
   type ProcessorParameter,
-  ProcessorParameter as ProcessorParameters,
+  ProcessorParameter as AicProcessorParameter,
 } from "./sdk.js";
 
 const SLOW_WARNING_INTERVAL_MS = 10_000;
 
-export interface ModelParameters {
+export interface ProcessorParameters {
   enhancementLevel?: number;
   bypass?: boolean;
 }
@@ -24,7 +24,7 @@ export interface ProcessorOptions {
   /** SDK Model, artifact model ID, or local `.aicmodel` path. */
   model: ModelInput;
   licenseKey?: string;
-  modelParameters?: ModelParameters;
+  processorParameters?: ProcessorParameters;
   downloadDir?: string;
   otelConfig?: OtelConfig;
 }
@@ -55,7 +55,7 @@ export class Processor extends FrameProcessor<AudioFrame> {
   private processor: InstanceType<typeof AicProcessor> | null;
   private context: ProcessorContext | null;
   private readonly parameters = new Map<ProcessorParameter, number>();
-  private readonly modelParameters: ModelParameters;
+  private readonly processorParameters: ProcessorParameters;
   private streamFormat: [number, number, number] | null = null;
   private filteringEnabled = true;
   private needsReset = false;
@@ -82,8 +82,8 @@ export class Processor extends FrameProcessor<AudioFrame> {
       });
     }
     this.context = this.processor.getProcessorContext();
-    this.modelParameters = { ...options.modelParameters };
-    this.updateModelParameters(this.modelParameters);
+    this.processorParameters = { ...options.processorParameters };
+    this.updateProcessorParameters(this.processorParameters);
   }
 
   isEnabled(): boolean {
@@ -116,21 +116,21 @@ export class Processor extends FrameProcessor<AudioFrame> {
     this.context?.setParameter(parameter, value);
   }
 
-  updateModelParameters(parameters: ModelParameters): void {
+  updateProcessorParameters(parameters: ProcessorParameters): void {
     if (parameters.enhancementLevel !== undefined) {
       const level = parameters.enhancementLevel;
       if (level < 0 || level > 1) {
         throw new Error(`enhancementLevel must be in [0.0, 1.0], got ${level}`);
       }
-      this.modelParameters.enhancementLevel = level;
-      this.setParameter(ProcessorParameters.EnhancementLevel, level);
+      this.processorParameters.enhancementLevel = level;
+      this.setParameter(AicProcessorParameter.EnhancementLevel, level);
     }
     if (parameters.bypass !== undefined) {
       if (typeof parameters.bypass !== "boolean") {
         throw new TypeError("bypass must be a boolean");
       }
-      this.modelParameters.bypass = parameters.bypass;
-      this.setParameter(ProcessorParameters.Bypass, parameters.bypass ? 1 : 0);
+      this.processorParameters.bypass = parameters.bypass;
+      this.setParameter(AicProcessorParameter.Bypass, parameters.bypass ? 1 : 0);
     }
   }
 

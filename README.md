@@ -37,7 +37,7 @@ from livekit.plugins import ai_coustics
 
 noise_cancellation = ai_coustics.Processor(
     model="quail-vf-2.2-l-16khz",  # artifact ID, downloaded and cached
-    model_parameters=ai_coustics.ModelParameters(enhancement_level=1.0),
+    processor_parameters=ai_coustics.ProcessorParameters(enhancement_level=1.0),
 )
 
 # For offline deployment, pass an explicit file path instead:
@@ -63,7 +63,7 @@ import { Processor } from "@ai-coustics/livekit-agents";
 
 const noiseCancellation = new Processor({
   model: "quail-vf-2.2-l-16khz", // artifact ID, downloaded and cached
-  modelParameters: { enhancementLevel: 1.0 },
+  processorParameters: { enhancementLevel: 1.0 },
 });
 
 // For offline deployment, use: model: "./models/quail.aicmodel"
@@ -72,9 +72,9 @@ const noiseCancellation = new Processor({
 Pass `noiseCancellation` anywhere LiveKit accepts a `FrameProcessor<AudioFrame>`.
 `licenseKey` can be passed explicitly instead of using `AIC_SDK_LICENSE`.
 
-Both implementations expose runtime `ModelParameters`, plus the underlying Processor context
+Both implementations expose runtime `ProcessorParameters`, plus the underlying Processor context
 (`processor_context` in Python, `processorContext` in Node) for advanced parameter control and
-output-delay inspection. Prefer `update_model_parameters` / `updateModelParameters` or the
+output-delay inspection. Prefer `update_processor_parameters` / `updateProcessorParameters` or the
 plugins' raw parameter setters when a value must survive stream format changes. Use bypass for
 latency-compensated passthrough; disabling the processor returns immediate, undelayed input.
 

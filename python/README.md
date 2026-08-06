@@ -8,7 +8,7 @@ from livekit.plugins import ai_coustics
 
 noise_cancellation = ai_coustics.Processor(
     model="quail-vf-2.2-l-16khz",
-    model_parameters=ai_coustics.ModelParameters(enhancement_level=1.0),
+    processor_parameters=ai_coustics.ProcessorParameters(enhancement_level=1.0),
 )
 
 # An explicit .aicmodel path avoids network access at startup:

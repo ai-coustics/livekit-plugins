@@ -8,7 +8,7 @@ import { Processor } from "@ai-coustics/livekit-agents";
 
 const noiseCancellation = new Processor({
   model: "quail-vf-2.2-l-16khz",
-  modelParameters: { enhancementLevel: 1.0 },
+  processorParameters: { enhancementLevel: 1.0 },
 });
 
 // An explicit .aicmodel path avoids network access at startup:

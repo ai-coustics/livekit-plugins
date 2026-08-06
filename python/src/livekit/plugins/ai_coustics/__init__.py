@@ -5,7 +5,7 @@ from livekit.agents import Plugin
 
 from ._model import DEFAULT_DOWNLOAD_DIR, ModelInput, download_model, load_model
 from .log import logger
-from .processor import ModelParameters, Processor
+from .processor import Processor, ProcessorParameters
 
 try:
     __version__ = version("ai-coustics-livekit")
@@ -25,10 +25,10 @@ __all__ = [
     "DEFAULT_DOWNLOAD_DIR",
     "Model",
     "ModelInput",
-    "ModelParameters",
     "OtelConfig",
     "ProcessorContext",
     "Processor",
+    "ProcessorParameters",
     "ProcessorParameter",
     "__version__",
     "download_model",

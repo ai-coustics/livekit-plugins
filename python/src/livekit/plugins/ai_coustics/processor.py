@@ -35,7 +35,7 @@ def _float32_to_pcm16(data: np.ndarray) -> bytes:
 
 
 @dataclass
-class ModelParameters:
+class ProcessorParameters:
     """Runtime-adjustable enhancement parameters; ``None`` retains the current value."""
 
     enhancement_level: float | None = None
@@ -55,7 +55,7 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
         *,
         model: ModelInput,
         license_key: str | None = None,
-        model_parameters: ModelParameters | None = None,
+        processor_parameters: ProcessorParameters | None = None,
         download_dir: str | PathLike[str] | None = None,
         otel_config: aic_sdk.OtelConfig | None = None,
     ) -> None:
@@ -73,14 +73,14 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
         self._processor: aic_sdk.Processor | None = processor
         self._context: aic_sdk.ProcessorContext | None = self._processor.get_processor_context()
         self._parameters: list[tuple[aic_sdk.ProcessorParameter, float]] = []
-        self._model_parameters = model_parameters or ModelParameters()
+        self._processor_parameters = processor_parameters or ProcessorParameters()
         self._format: tuple[int, int, int] | None = None
         self._enabled = True
         self._needs_reset = False
         self._last_error_message: str | None = None
         self._last_slow_warning = 0.0
 
-        self.update_model_parameters(self._model_parameters)
+        self.update_processor_parameters(self._processor_parameters)
 
     @property
     def enabled(self) -> bool:
@@ -120,19 +120,19 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
         if self._context is not None:
             self._context.set_parameter(parameter, value)
 
-    def update_model_parameters(self, parameters: ModelParameters) -> None:
-        """Apply a partial model-parameter update immediately and on future formats."""
+    def update_processor_parameters(self, parameters: ProcessorParameters) -> None:
+        """Apply a partial Processor-parameter update immediately and on future formats."""
 
         if parameters.enhancement_level is not None:
             level = parameters.enhancement_level
             if not 0.0 <= level <= 1.0:
                 raise ValueError(f"enhancement_level must be in [0.0, 1.0], got {level}")
-            self._model_parameters.enhancement_level = level
+            self._processor_parameters.enhancement_level = level
             self.set_parameter(aic_sdk.ProcessorParameter.EnhancementLevel, level)
         if parameters.bypass is not None:
             if not isinstance(parameters.bypass, bool):
                 raise TypeError("bypass must be a bool")
-            self._model_parameters.bypass = parameters.bypass
+            self._processor_parameters.bypass = parameters.bypass
             self.set_parameter(
                 aic_sdk.ProcessorParameter.Bypass,
                 1.0 if parameters.bypass else 0.0,

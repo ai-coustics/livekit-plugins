@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from livekit import rtc
-from livekit.plugins.ai_coustics import ModelParameters, Processor
+from livekit.plugins.ai_coustics import Processor, ProcessorParameters
 
 
 @dataclass
@@ -125,7 +125,7 @@ def test_wraps_processor_construction_errors(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_processes_one_complete_stereo_livekit_frame() -> None:
-    enhancer = create_enhancer(model_parameters=ModelParameters(enhancement_level=0.75))
+    enhancer = create_enhancer(processor_parameters=ProcessorParameters(enhancement_level=0.75))
     pcm = np.array([1000, -1000, 2000, -2000, 3000, -3000], dtype=np.int16)
     userdata = {"source": "test"}
     output = enhancer._process(make_frame(channels=2, frames=3, data=pcm, userdata=userdata))
@@ -159,9 +159,9 @@ def test_reinitializes_when_any_frame_geometry_changes() -> None:
 
 
 def test_parameter_updates_merge_validate_and_survive_reinit() -> None:
-    enhancer = create_enhancer(model_parameters=ModelParameters(bypass=True))
+    enhancer = create_enhancer(processor_parameters=ProcessorParameters(bypass=True))
     enhancer._process(make_frame())
-    enhancer.update_model_parameters(ModelParameters(enhancement_level=0.9))
+    enhancer.update_processor_parameters(ProcessorParameters(enhancement_level=0.9))
     enhancer._process(make_frame(frames=160))
     processor = FakeProcessor.instances[0]
 
@@ -170,7 +170,7 @@ def test_parameter_updates_merge_validate_and_survive_reinit() -> None:
         processor.context.parameters.count((aic_sdk.ProcessorParameter.EnhancementLevel, 0.9)) == 2
     )
     with pytest.raises(ValueError, match="enhancement_level"):
-        enhancer.update_model_parameters(ModelParameters(enhancement_level=1.1))
+        enhancer.update_processor_parameters(ProcessorParameters(enhancement_level=1.1))
 
 
 def test_disabled_processor_is_passthrough_and_reenable_resets() -> None:

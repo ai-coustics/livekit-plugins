@@ -7,9 +7,9 @@ export {
 export {
   float32ToPcm16,
   pcm16ToFloat32,
-  type ModelParameters,
   Processor,
   type ProcessorOptions,
+  type ProcessorParameters,
 } from "./processor.js";
 export {
   DEFAULT_DOWNLOAD_DIR,

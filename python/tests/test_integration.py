@@ -53,10 +53,10 @@ def test_real_processor_with_model_id_and_fifty_ms_frames() -> None:
 def test_real_processor_stereo_and_runtime_parameters() -> None:
     enhancer = ai_coustics.Processor(
         model=MODEL_ID,
-        model_parameters=ai_coustics.ModelParameters(bypass=True),
+        processor_parameters=ai_coustics.ProcessorParameters(bypass=True),
     )
     output = enhancer._process(_frame(0, channels=2))
-    enhancer.update_model_parameters(ai_coustics.ModelParameters(bypass=False))
+    enhancer.update_processor_parameters(ai_coustics.ProcessorParameters(bypass=False))
 
     assert output.num_channels == 2
     assert output.samples_per_channel == SAMPLES_PER_FRAME

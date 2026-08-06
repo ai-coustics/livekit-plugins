@@ -47,10 +47,10 @@ describeIf("native Processor integration", () => {
   it("supports stereo and runtime bypass updates", () => {
     const enhancer = new Processor({
       model: modelId,
-      modelParameters: { bypass: true },
+      processorParameters: { bypass: true },
     });
     const output = enhancer.process(frame(0, 2));
-    enhancer.updateModelParameters({ bypass: false });
+    enhancer.updateProcessorParameters({ bypass: false });
 
     expect(output.channels).toBe(2);
     expect(output.samplesPerChannel).toBe(samplesPerFrame);
