@@ -29,7 +29,14 @@ jobs:
 
   python-integration:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+    env:
+      AIC_INTEGRATION_MODEL_ID: quail-vf-2.2-s-16khz
+      LIVEKIT_URL: ws://127.0.0.1:7880
+      LIVEKIT_API_KEY: devkey
+      LIVEKIT_API_SECRET: secret
+      LIVEKIT_SERVER_IMAGE: livekit/livekit-server:v1.13.1
     defaults:
       run:
         working-directory: python
@@ -38,11 +45,40 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/aic-sdk/models
+          key: aic-model-${{ runner.os }}-${{ env.AIC_INTEGRATION_MODEL_ID }}
       - run: uv sync --dev
+      - name: Require the SDK license
+        env:
+          AIC_SDK_LICENSE: ${{ secrets.AIC_SDK_LICENSE }}
+        run: test -n "$AIC_SDK_LICENSE"
       - name: Native Processor integration tests
         env:
           AIC_SDK_LICENSE: ${{ secrets.AIC_SDK_LICENSE }}
         run: uv run pytest tests/test_integration.py -q
+      - name: Start LiveKit test server
+        run: |
+          docker run --detach --name livekit-e2e --network host "$LIVEKIT_SERVER_IMAGE" --dev --logging.level warn
+          for attempt in $(seq 1 50); do
+            if nc -z 127.0.0.1 7880; then
+              exit 0
+            fi
+            sleep 0.2
+          done
+          docker logs livekit-e2e
+          exit 1
+      - name: AgentSession room end-to-end test
+        env:
+          AIC_SDK_LICENSE: ${{ secrets.AIC_SDK_LICENSE }}
+        run: uv run pytest tests/test_e2e_room.py -q
+      - name: LiveKit server logs
+        if: ${{ always() }}
+        run: docker logs livekit-e2e 2>&1 || true
+      - name: Stop LiveKit test server
+        if: ${{ always() }}
+        run: docker rm --force livekit-e2e 2>/dev/null || true
 
   node:
     runs-on: ubuntu-latest
@@ -67,7 +103,14 @@ jobs:
 
   node-integration:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+    env:
+      AIC_INTEGRATION_MODEL_ID: quail-vf-2.2-s-16khz
+      LIVEKIT_URL: ws://127.0.0.1:7880
+      LIVEKIT_API_KEY: devkey
+      LIVEKIT_API_SECRET: secret
+      LIVEKIT_SERVER_IMAGE: livekit/livekit-server:v1.13.1
     defaults:
       run:
         working-directory: node
@@ -78,9 +121,37 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: node/package-lock.json
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/aic-sdk/models
+          key: aic-model-${{ runner.os }}-${{ env.AIC_INTEGRATION_MODEL_ID }}-node
       - run: npm ci
+      - name: Require the SDK license
+        env:
+          AIC_SDK_LICENSE: ${{ secrets.AIC_SDK_LICENSE }}
+        run: test -n "$AIC_SDK_LICENSE"
       - name: Native Processor integration tests
         env:
           AIC_SDK_LICENSE: ${{ secrets.AIC_SDK_LICENSE }}
         run: npm run test:integration
-
+      - name: Start LiveKit test server
+        run: |
+          docker run --detach --name livekit-e2e --network host "$LIVEKIT_SERVER_IMAGE" --dev --logging.level warn
+          for attempt in $(seq 1 50); do
+            if nc -z 127.0.0.1 7880; then
+              exit 0
+            fi
+            sleep 0.2
+          done
+          docker logs livekit-e2e
+          exit 1
+      - name: AgentSession room end-to-end test
+        env:
+          AIC_SDK_LICENSE: ${{ secrets.AIC_SDK_LICENSE }}
+        run: npm run test:e2e
+      - name: LiveKit server logs
+        if: ${{ always() }}
+        run: docker logs livekit-e2e 2>&1 || true
+      - name: Stop LiveKit test server
+        if: ${{ always() }}
+        run: docker rm --force livekit-e2e 2>/dev/null || true
