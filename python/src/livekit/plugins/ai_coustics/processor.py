@@ -56,6 +56,11 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
         processor_parameters: ProcessorParameters | None = None,
     ) -> None:
         resolved_license_key = _license_key(license_key)
+
+        # This runtime-only SDK hook must run before Processor construction because the SDK keeps
+        # the first integration identifier it receives. ID 8 identifies the LiveKit Python plugin.
+        aic_sdk.set_sdk_id(8)  # type: ignore[attr-defined]
+
         try:
             processor = aic_sdk.Processor(
                 model,
@@ -65,7 +70,7 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
             raise RuntimeError(f"Failed to create ai-coustics Processor: {error}") from error
 
         self._processor: aic_sdk.Processor | None = processor
-        self._context: aic_sdk.ProcessorContext | None = self._processor.get_processor_context()
+        self._context: aic_sdk.ProcessorContext | None = self._processor.get_context()
         self._format: tuple[int, int, int] | None = None
         self._enabled = True
         self._last_error_message: str | None = None
@@ -105,11 +110,14 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
             )
 
     def _process(self, frame: rtc.AudioFrame) -> rtc.AudioFrame:
+        # A disabled or closed processor is a transparent LiveKit frame processor.
         if not self.enabled or self._processor is None or self._context is None:
             return frame
 
         started = time.perf_counter()
         try:
+            # LiveKit supplies the stream geometry with each frame, so SDK initialization must be
+            # lazy. Reinitializing on a geometry change also clears state from the previous stream.
             stream_format = (
                 frame.sample_rate,
                 frame.num_channels,
@@ -120,19 +128,20 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
                 self._processor.initialize(
                     aic_sdk.ProcessorConfig(
                         sample_rate=frame.sample_rate,
-                        num_channels=frame.num_channels,
-                        num_frames=frame.samples_per_channel,
-                        allow_variable_frames=False,
+                        block_size=frame.samples_per_channel,
+                        variable_block_size=False,
                     )
                 )
                 self._format = stream_format
                 logger.info(
                     "ai-coustics initialized: %d Hz, %d ch, %d samples/frame, "
-                    "output delay %d samples",
+                    "audio delay %d samples",
                     *stream_format,
-                    self._context.get_output_delay(),
+                    self._context.get_audio_delay(),
                 )
 
+            # LiveKit stores signed 16-bit PCM samples interleaved by channel. The SDK operates on
+            # normalized float32 samples, so validate the frame before reshaping it.
             samples = _pcm16_to_float32(frame.data)
             expected_samples = frame.samples_per_channel * frame.num_channels
             if samples.size != expected_samples:
@@ -140,14 +149,31 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
                     f"AudioFrame contains {samples.size} samples, expected {expected_samples}"
                 )
 
-            planar = samples.reshape(frame.samples_per_channel, frame.num_channels).T.copy()
-            processed = self._processor.process(planar)
-            interleaved = processed.T.reshape(-1)
+            # aic-sdk 3 accepts only a contiguous, one-dimensional mono block. For multichannel
+            # input, average all channels just as the pre-3.0 SDK did internally. Copying the mono
+            # view makes it contiguous as well.
+            channels = samples.reshape(frame.samples_per_channel, frame.num_channels)
+            mono = (
+                channels[:, 0].copy()
+                if frame.num_channels == 1
+                else channels.mean(axis=1, dtype=np.float32)
+            )
+            processed = self._processor.process(mono)
+
+            # FrameProcessor output must retain the input geometry. Expand the enhanced mono block
+            # back to interleaved PCM by writing the same processed signal to every input channel.
+            interleaved = (
+                processed if frame.num_channels == 1 else np.repeat(processed, frame.num_channels)
+            )
         except Exception as error:
+            # Keep room audio flowing if SDK initialization or processing fails.
             self._log_error(f"{type(error).__name__}: {error}")
             return frame
 
         self._last_error_message = None
+
+        # Processing is synchronous on LiveKit's audio path. Warn, at a throttled rate, when a
+        # block takes longer to process than the amount of audio it contains.
         elapsed = time.perf_counter() - started
         frame_duration = frame.samples_per_channel / frame.sample_rate
         if elapsed > frame_duration and started - self._last_slow_warning > _SLOW_WARNING_INTERVAL:
@@ -175,6 +201,14 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
 
     def _close(self) -> None:
         self._enabled = False
+        processor = self._processor
+
+        if processor is not None:
+            try:
+                processor.terminate_session()
+            except Exception as error:
+                logger.error("Failed to terminate ai-coustics Processor session: %s", error)
+
         self._context = None
         self._processor = None
         self._format = None

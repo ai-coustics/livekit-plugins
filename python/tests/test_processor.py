@@ -10,6 +10,8 @@ import pytest
 from livekit import rtc
 from livekit.plugins.ai_coustics import Model, Processor, ProcessorParameters
 
+native_calls: list[tuple[str, int | None]] = []
+
 
 @dataclass
 class FakeContext:
@@ -19,7 +21,7 @@ class FakeContext:
     def set_parameter(self, parameter: object, value: float) -> None:
         self.parameters.append((parameter, value))
 
-    def get_output_delay(self) -> int:
+    def get_audio_delay(self) -> int:
         return 42
 
     def reset(self) -> None:
@@ -41,13 +43,15 @@ class FakeProcessor:
         self.blocks: list[np.ndarray] = []
         self.gain = 1.0
         self.error: Exception | None = None
+        self.terminate_calls = 0
         self.instances.append(self)
+        native_calls.append(("processor", None))
 
-    def get_processor_context(self) -> FakeContext:
+    def get_context(self) -> FakeContext:
         return self.context
 
     def initialize(self, config: aic_sdk.ProcessorConfig) -> None:
-        self.inits.append((config.sample_rate, config.num_channels, config.num_frames))
+        self.inits.append((config.sample_rate, config.block_size, config.variable_block_size))
 
     def process(self, block: np.ndarray) -> np.ndarray:
         if self.error is not None:
@@ -55,10 +59,18 @@ class FakeProcessor:
         self.blocks.append(block.copy())
         return block * self.gain
 
+    def terminate_session(self) -> None:
+        self.terminate_calls += 1
+
 
 @pytest.fixture(autouse=True)
 def fake_native_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeProcessor.instances.clear()
+    native_calls.clear()
+    monkeypatch.setattr(
+        "livekit.plugins.ai_coustics.processor.aic_sdk.set_sdk_id",
+        lambda sdk_id: native_calls.append(("sdk_id", sdk_id)),
+    )
     monkeypatch.setattr(
         "livekit.plugins.ai_coustics.processor.aic_sdk.Processor",
         FakeProcessor,
@@ -95,6 +107,7 @@ def test_constructs_processor_without_probe_frame() -> None:
     create_enhancer()
 
     processor = FakeProcessor.instances[0]
+    assert native_calls[:2] == [("sdk_id", 8), ("processor", None)]
     assert processor.inits == []
     assert processor.blocks == []
     assert processor.context.reset_count == 0
@@ -117,20 +130,23 @@ def test_wraps_processor_construction_errors(monkeypatch: pytest.MonkeyPatch) ->
     assert exc_info.value.__cause__ is sdk_error
 
 
-def test_processes_one_complete_stereo_livekit_frame() -> None:
+def test_downmixes_stereo_for_sdk_and_preserves_livekit_frame_geometry() -> None:
     enhancer = create_enhancer(processor_parameters=ProcessorParameters(enhancement_level=0.75))
-    pcm = np.array([1000, -1000, 2000, -2000, 3000, -3000], dtype=np.int16)
+    pcm = np.array([1000, 3000, 2000, 4000, 3000, 5000], dtype=np.int16)
     userdata = {"source": "test"}
     output = enhancer._process(make_frame(channels=2, frames=3, data=pcm, userdata=userdata))
     processor = FakeProcessor.instances[0]
 
-    assert np.array_equal(np.frombuffer(output.data, dtype=np.int16), pcm)
+    assert np.array_equal(
+        np.frombuffer(output.data, dtype=np.int16),
+        np.array([2000, 2000, 3000, 3000, 4000, 4000], dtype=np.int16),
+    )
     assert output.userdata is userdata
-    assert processor.inits == [(16000, 2, 3)]
-    assert [block.shape for block in processor.blocks] == [(2, 3)]
+    assert processor.inits == [(16000, 3, False)]
+    assert [block.shape for block in processor.blocks] == [(3,)]
     assert np.array_equal(
         processor.blocks[-1],
-        np.array([[1000, 2000, 3000], [-1000, -2000, -3000]]) / 32768,
+        np.array([2000, 3000, 4000], dtype=np.float32) / 32768,
     )
     expected = (aic_sdk.ProcessorParameter.EnhancementLevel, 0.75)
     assert processor.context.parameters.count(expected) == 1
@@ -144,9 +160,9 @@ def test_reinitializes_when_any_frame_geometry_changes() -> None:
     enhancer._process(make_frame(sample_rate=48000, frames=2400))
 
     assert FakeProcessor.instances[0].inits == [
-        (16000, 1, 800),
-        (16000, 1, 160),
-        (48000, 1, 2400),
+        (16000, 800, False),
+        (16000, 160, False),
+        (48000, 2400, False),
     ]
 
 
@@ -195,11 +211,14 @@ def test_processing_error_returns_original_and_deduplicates_log(
     assert sum("boom" in record.getMessage() for record in caplog.records) == 1
 
 
-def test_close_releases_native_processor() -> None:
+def test_close_terminates_and_releases_native_processor() -> None:
     enhancer = create_enhancer()
+    processor = FakeProcessor.instances[0]
     frame = make_frame()
     enhancer._close()
+    enhancer._close()
 
+    assert processor.terminate_calls == 1
     assert enhancer.enabled is False
     assert enhancer._process(frame) is frame
 

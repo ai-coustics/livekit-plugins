@@ -22,7 +22,7 @@ classifiers = [
   "Topic :: Multimedia :: Sound/Audio :: Speech",
 ]
 dependencies = [
-  "aic-sdk>=2.5.0,<3",
+  "aic-sdk>=3.0.0,<4",
   "livekit-agents>=1.4.2,<2",
   "numpy>=2.0.2",
 ]
