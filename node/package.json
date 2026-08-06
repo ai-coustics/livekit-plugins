@@ -2,7 +2,7 @@
   "name": "@ai-coustics/livekit-agents",
   "version": "0.1.0",
   "description": "ai-coustics noise cancellation for LiveKit Agents",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "author": "ai-coustics GmbH",
   "type": "module",
   "main": "dist/index.cjs",
@@ -21,7 +21,10 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
   ],
   "engines": {
     "node": ">=18"
@@ -29,7 +32,9 @@
   "scripts": {
     "build": "tsup",
     "check": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run test/processor.test.ts",
+    "test:integration": "vitest run test/integration.test.ts",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@ai-coustics/aic-sdk": "^0.21.0"

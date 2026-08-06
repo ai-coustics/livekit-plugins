@@ -11,32 +11,37 @@ scope for this first version.
 
 ## Design
 
-The plugins use the public ai-coustics SDK directly. A model and ai-coustics SDK license are
-resolved when the filter is constructed; no model download or license lookup occurs in the audio
-callback. The native Processor is initialized lazily when the first LiveKit frame reveals the
-sample rate and channel count.
+The plugins use the public ai-coustics SDK directly. `Processor` accepts an already-loaded SDK
+`Model`, never a model ID or file path. Both packages expose the SDK's `Model.from_file` /
+`Model.fromFile` and `Model.download` APIs so applications can choose explicitly when and where
+models are downloaded and loaded.
 
-LiveKit commonly supplies frames larger than an ai-coustics model's optimal window. Each plugin
-therefore initializes the SDK with the model's optimal frame count and variable-frame support,
-then processes a LiveKit frame in optimal-sized blocks (plus a possible short tail). The returned
-LiveKit frame always has the same shape and metadata as its input.
+Model loading and native Processor construction happen when the filter is constructed. Any
+synchronous SDK construction error is raised with its original error attached. Backend
+authentication continues asynchronously during the SDK's grace period, so the plugin does not
+probe it by processing a throwaway frame. The Processor is configured when the first LiveKit frame
+reveals the complete stream geometry. Every LiveKit frame is processed in one fixed-size SDK call.
+This uses the SDK's own frame adapter, preserves frame shape and metadata, and measured lower
+latency than enabling the SDK's variable-frame mode.
 
 ## Python
 
-Install the package from `python/`, set `AIC_SDK_LICENSE`, and load or download the model before
+Install the package from `python/`, set `AIC_SDK_LICENSE`, and construct the processor before
 starting the agent:
 
 ```python
-from aic_sdk import Model
 from livekit.plugins import ai_coustics
 
-model_path = Model.download("quail-vf-2.1-l-16khz", "./models")
-model = Model.from_file(model_path)
+model_path = ai_coustics.Model.download("quail-vf-2.2-l-16khz", "./models")
+model = ai_coustics.Model.from_file(model_path)
 
-noise_cancellation = ai_coustics.audio_enhancement(
+noise_cancellation = ai_coustics.Processor(
     model=model,
-    enhancement_level=1.0,
+    processor_parameters=ai_coustics.ProcessorParameters(enhancement_level=1.0),
 )
+
+# For a model provisioned during deployment, skip the download:
+# model = ai_coustics.Model.from_file("./models/quail.aicmodel")
 ```
 
 Pass `noise_cancellation` anywhere LiveKit accepts an
@@ -54,37 +59,41 @@ Install the package from `node/`, set `AIC_SDK_LICENSE`, and construct the filte
 the agent:
 
 ```ts
-import { Model, audioEnhancement } from "@ai-coustics/livekit-agents";
+import { Model, Processor } from "@ai-coustics/livekit-agents";
 
-const modelPath = Model.download("quail-vf-2.1-l-16khz", "./models");
+const modelPath = Model.download("quail-vf-2.2-l-16khz", "./models");
 const model = Model.fromFile(modelPath);
 
-const noiseCancellation = audioEnhancement({
+const noiseCancellation = new Processor({
   model,
-  enhancementLevel: 1.0,
+  processorParameters: { enhancementLevel: 1.0 },
 });
+
+// For a provisioned model, use: Model.fromFile("./models/quail.aicmodel")
 ```
 
 Pass `noiseCancellation` anywhere LiveKit accepts a `FrameProcessor<AudioFrame>`.
 `licenseKey` can be passed explicitly instead of using `AIC_SDK_LICENSE`.
 
-Both implementations expose the underlying Processor context (`processor_context` in Python,
-`processorContext` in Node) for advanced parameter control and output-delay inspection. Prefer
-the plugins' `set_parameter` / `setParameter` methods when a value must survive stream format
-changes.
+Both implementations expose runtime `ProcessorParameters`. Apply partial runtime updates with
+`set_parameters` / `setParameters`; the SDK retains values across stream reconfiguration. Use
+bypass for latency-compensated passthrough; disabling the processor returns immediate, undelayed
+input.
 
 ## Development
 
 ```bash
 cd python
 uv sync --dev
-uv run pytest
+uv run pytest tests/test_processor.py
+uv run pytest tests/test_integration.py  # requires AIC_SDK_LICENSE
 uv run ruff check .
 uv run mypy
 
 cd ../node
 npm install
 npm test
+npm run test:integration                 # requires AIC_SDK_LICENSE
 npm run check
 npm run build
 ```

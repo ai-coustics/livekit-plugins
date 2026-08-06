@@ -1,6 +1,5 @@
 import {
   Model as NativeModel,
-  OtelConfig as NativeOtelConfig,
   Processor as NativeProcessor,
   ProcessorParameter as NativeProcessorParameter,
 } from "@ai-coustics/aic-sdk";
@@ -15,18 +14,6 @@ export interface Model {
 interface ModelConstructor {
   fromFile(path: string): Model;
   download(modelId: string, downloadDir: string): string;
-}
-
-export interface OtelConfig {
-  enable: boolean;
-  sessionId: string | null;
-  exportIntervalMs: number;
-}
-
-interface OtelConfigConstructor {
-  enabled(): OtelConfig;
-  disabled(): OtelConfig;
-  withSessionId(sessionId: string): OtelConfig;
 }
 
 export const ProcessorParameter: {
@@ -56,14 +43,8 @@ interface ProcessorInstance {
 }
 
 interface ProcessorConstructor {
-  new (
-    model: Model,
-    licenseKey: string,
-    otelConfig?: OtelConfig | null,
-  ): ProcessorInstance;
+  new (model: Model, licenseKey: string): ProcessorInstance;
 }
 
 export const Model: ModelConstructor = NativeModel;
-export const OtelConfig: OtelConfigConstructor = NativeOtelConfig;
 export const Processor: ProcessorConstructor = NativeProcessor;
-

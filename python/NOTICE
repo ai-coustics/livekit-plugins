@@ -1,0 +1,10 @@
+ai-coustics plugins for LiveKit Agents
+Copyright 2026 ai-coustics GmbH
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+------------------------------------------------------------------------------
+This product depends on, but does not redistribute, the ai-coustics SDK
+(`aic-sdk` on PyPI, `@ai-coustics/aic-sdk` on npm). The ai-coustics SDK core
+is distributed under the proprietary AIC-SDK license and requires a valid
+license key. See https://ai-coustics.com/.

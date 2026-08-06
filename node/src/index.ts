@@ -1,14 +1,8 @@
+export { Model } from "./sdk.js";
 export {
-  Model,
-  OtelConfig,
-  ProcessorParameter,
-  type ProcessorContext,
-} from "./sdk.js";
-export {
-  AudioEnhancement,
-  audioEnhancement,
   float32ToPcm16,
   pcm16ToFloat32,
-  type AudioEnhancementParams,
-  type ModelInput,
+  Processor,
+  type ProcessorOptions,
+  type ProcessorParameters,
 } from "./processor.js";
