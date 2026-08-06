@@ -10,6 +10,8 @@ import pytest
 from livekit import rtc
 from livekit.plugins.ai_coustics import Model, Processor, ProcessorParameters
 
+native_calls: list[tuple[str, int | None]] = []
+
 
 @dataclass
 class FakeContext:
@@ -43,6 +45,7 @@ class FakeProcessor:
         self.error: Exception | None = None
         self.terminate_calls = 0
         self.instances.append(self)
+        native_calls.append(("processor", None))
 
     def get_context(self) -> FakeContext:
         return self.context
@@ -63,6 +66,11 @@ class FakeProcessor:
 @pytest.fixture(autouse=True)
 def fake_native_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeProcessor.instances.clear()
+    native_calls.clear()
+    monkeypatch.setattr(
+        "livekit.plugins.ai_coustics.processor.aic_sdk.set_sdk_id",
+        lambda sdk_id: native_calls.append(("sdk_id", sdk_id)),
+    )
     monkeypatch.setattr(
         "livekit.plugins.ai_coustics.processor.aic_sdk.Processor",
         FakeProcessor,
@@ -99,6 +107,7 @@ def test_constructs_processor_without_probe_frame() -> None:
     create_enhancer()
 
     processor = FakeProcessor.instances[0]
+    assert native_calls[:2] == [("sdk_id", 8), ("processor", None)]
     assert processor.inits == []
     assert processor.blocks == []
     assert processor.context.reset_count == 0

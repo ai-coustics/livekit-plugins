@@ -56,6 +56,11 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
         processor_parameters: ProcessorParameters | None = None,
     ) -> None:
         resolved_license_key = _license_key(license_key)
+
+        # This runtime-only SDK hook must run before Processor construction because the SDK keeps
+        # the first integration identifier it receives. ID 8 identifies the LiveKit Python plugin.
+        aic_sdk.set_sdk_id(8)  # type: ignore[attr-defined]
+
         try:
             processor = aic_sdk.Processor(
                 model,
