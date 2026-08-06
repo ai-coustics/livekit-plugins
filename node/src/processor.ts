@@ -49,8 +49,6 @@ export function float32ToPcm16(data: Float32Array): Int16Array {
 export class Processor extends FrameProcessor<AudioFrame> {
   private processor: InstanceType<typeof AicProcessor> | null;
   private context: ProcessorContext | null;
-  private readonly parameters = new Map<ProcessorParameter, number>();
-  private readonly processorParameters: ProcessorParameters;
   private streamFormat: [number, number, number] | null = null;
   private filteringEnabled = true;
   private needsReset = false;
@@ -73,8 +71,9 @@ export class Processor extends FrameProcessor<AudioFrame> {
       });
     }
     this.context = this.processor.getProcessorContext();
-    this.processorParameters = { ...options.processorParameters };
-    this.updateProcessorParameters(this.processorParameters);
+    if (options.processorParameters) {
+      this.updateProcessorParameters(options.processorParameters);
+    }
   }
 
   isEnabled(): boolean {
@@ -103,7 +102,6 @@ export class Processor extends FrameProcessor<AudioFrame> {
   }
 
   setParameter(parameter: ProcessorParameter, value: number): void {
-    this.parameters.set(parameter, value);
     this.context?.setParameter(parameter, value);
   }
 
@@ -113,22 +111,13 @@ export class Processor extends FrameProcessor<AudioFrame> {
       if (level < 0 || level > 1) {
         throw new Error(`enhancementLevel must be in [0.0, 1.0], got ${level}`);
       }
-      this.processorParameters.enhancementLevel = level;
       this.setParameter(AicProcessorParameter.EnhancementLevel, level);
     }
     if (parameters.bypass !== undefined) {
       if (typeof parameters.bypass !== "boolean") {
         throw new TypeError("bypass must be a boolean");
       }
-      this.processorParameters.bypass = parameters.bypass;
       this.setParameter(AicProcessorParameter.Bypass, parameters.bypass ? 1 : 0);
-    }
-  }
-
-  private applyParameters(): void {
-    if (!this.context) return;
-    for (const [parameter, value] of this.parameters) {
-      this.context.setParameter(parameter, value);
     }
   }
 
@@ -153,7 +142,6 @@ export class Processor extends FrameProcessor<AudioFrame> {
         this.processor.initialize(...streamFormat, false);
         this.streamFormat = streamFormat;
         this.needsReset = false;
-        this.applyParameters();
         console.info(
           `ai-coustics initialized: ${streamFormat[0]} Hz, ${streamFormat[1]} ch, ` +
             `${streamFormat[2]} samples/frame, output delay ${this.context.getOutputDelay()} samples`,

@@ -122,7 +122,6 @@ describe("Processor", () => {
     expect(processor.blocks.at(-1)!.length).toBe(6);
     expect(processor.context.parameters.filter(([key]) => key === 1)).toEqual([
       [1, 0.75],
-      [1, 0.75],
     ]);
     expect(enhancer.outputDelay).toBe(42);
   });
@@ -164,7 +163,7 @@ describe("Processor", () => {
     ]);
   });
 
-  it("merges, validates, and reapplies Processor parameters", () => {
+  it("validates Processor parameters without reapplying them", () => {
     const enhancer = new Processor({
       model: new sdk.FakeModel(),
       licenseKey: "test-license",
@@ -175,9 +174,8 @@ describe("Processor", () => {
     enhancer.updateProcessorParameters({ enhancementLevel: 0.9 });
     enhancer.process(new AudioFrame(new Int16Array(160), 16000, 1, 160));
 
-    expect(processor.context.parameters.filter(([key]) => key === 0)).toHaveLength(3);
+    expect(processor.context.parameters.filter(([key]) => key === 0)).toHaveLength(1);
     expect(processor.context.parameters.filter(([key]) => key === 1)).toEqual([
-      [1, 0.9],
       [1, 0.9],
     ]);
     expect(() => enhancer.updateProcessorParameters({ enhancementLevel: 1.1 })).toThrow(

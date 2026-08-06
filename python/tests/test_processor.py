@@ -135,7 +135,7 @@ def test_processes_one_complete_stereo_livekit_frame() -> None:
         np.array([[1000, 2000, 3000], [-1000, -2000, -3000]]) / 32768,
     )
     expected = (aic_sdk.ProcessorParameter.EnhancementLevel, 0.75)
-    assert processor.context.parameters.count(expected) == 2  # eager set + format init
+    assert processor.context.parameters.count(expected) == 1
     assert enhancer.output_delay == 42
 
 
@@ -153,16 +153,16 @@ def test_reinitializes_when_any_frame_geometry_changes() -> None:
     ]
 
 
-def test_parameter_updates_merge_validate_and_survive_reinit() -> None:
+def test_parameter_updates_validate_and_are_not_reapplied() -> None:
     enhancer = create_enhancer(processor_parameters=ProcessorParameters(bypass=True))
     enhancer._process(make_frame())
     enhancer.update_processor_parameters(ProcessorParameters(enhancement_level=0.9))
     enhancer._process(make_frame(frames=160))
     processor = FakeProcessor.instances[0]
 
-    assert processor.context.parameters.count((aic_sdk.ProcessorParameter.Bypass, 1.0)) == 3
+    assert processor.context.parameters.count((aic_sdk.ProcessorParameter.Bypass, 1.0)) == 1
     assert (
-        processor.context.parameters.count((aic_sdk.ProcessorParameter.EnhancementLevel, 0.9)) == 2
+        processor.context.parameters.count((aic_sdk.ProcessorParameter.EnhancementLevel, 0.9)) == 1
     )
     with pytest.raises(ValueError, match="enhancement_level"):
         enhancer.update_processor_parameters(ProcessorParameters(enhancement_level=1.1))

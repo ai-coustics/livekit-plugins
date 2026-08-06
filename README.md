@@ -78,8 +78,9 @@ Pass `noiseCancellation` anywhere LiveKit accepts a `FrameProcessor<AudioFrame>`
 Both implementations expose runtime `ProcessorParameters`, plus the underlying Processor context
 (`processor_context` in Python, `processorContext` in Node) for advanced parameter control and
 output-delay inspection. Prefer `update_processor_parameters` / `updateProcessorParameters` or the
-plugins' raw parameter setters when a value must survive stream format changes. Use bypass for
-latency-compensated passthrough; disabling the processor returns immediate, undelayed input.
+plugins' raw parameter setters; the SDK context retains values across stream reconfiguration. Use
+bypass for latency-compensated passthrough; disabling the processor returns immediate, undelayed
+input.
 
 ## Development
 
