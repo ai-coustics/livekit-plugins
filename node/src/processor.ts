@@ -2,12 +2,12 @@ import { AudioFrame, FrameProcessor } from "@livekit/rtc-node";
 
 import {
   DEFAULT_DOWNLOAD_DIR,
-  EnhancerCore,
   loadModel,
   type ModelInput,
 } from "./model.js";
 import {
   type OtelConfig,
+  Processor,
   type ProcessorContext,
   type ProcessorParameter,
   ProcessorParameter as ProcessorParameters,
@@ -57,7 +57,8 @@ export class AudioEnhancement extends FrameProcessor<AudioFrame> {
   private readonly licenseKey: string;
   private readonly otelConfig?: OtelConfig;
   private readonly aicModel: ReturnType<typeof loadModel>;
-  private core: EnhancerCore | null;
+  private processor: InstanceType<typeof Processor> | null;
+  private context: ProcessorContext | null;
   private readonly parameters = new Map<ProcessorParameter, number>();
   private readonly modelParameters: ModelParameters;
   private streamFormat: [number, number, number] | null = null;
@@ -74,7 +75,13 @@ export class AudioEnhancement extends FrameProcessor<AudioFrame> {
       params.model,
       params.downloadDir ?? DEFAULT_DOWNLOAD_DIR,
     );
-    this.core = this.createCore();
+    this.processor = new Processor(
+      this.aicModel,
+      this.licenseKey,
+      this.otelConfig,
+    );
+    this.context = this.processor.getProcessorContext();
+    this.validateLicense();
     this.modelParameters = { ...params.modelParameters };
     if (params.enhancementLevel !== undefined) {
       this.modelParameters.enhancementLevel = params.enhancementLevel;
@@ -85,14 +92,13 @@ export class AudioEnhancement extends FrameProcessor<AudioFrame> {
     this.updateModelParameters(this.modelParameters);
   }
 
-  private createCore(): EnhancerCore {
-    const core = new EnhancerCore(
-      this.aicModel,
-      this.licenseKey,
-      this.otelConfig,
-    );
-    core.validateLicense();
-    return core;
+  private validateLicense(): void {
+    if (!this.processor || !this.context) return;
+    const sampleRate = this.aicModel.getOptimalSampleRate();
+    const numFrames = this.aicModel.getOptimalNumFrames(sampleRate);
+    this.processor.initialize(sampleRate, 1, numFrames, false);
+    this.processor.processInterleaved(new Float32Array(numFrames));
+    this.context.reset();
   }
 
   isEnabled(): boolean {
@@ -107,22 +113,22 @@ export class AudioEnhancement extends FrameProcessor<AudioFrame> {
   }
 
   get processorContext(): ProcessorContext {
-    if (!this.core) {
+    if (!this.context) {
       throw new Error("The ai-coustics processor is closed");
     }
-    return this.core.context;
+    return this.context;
   }
 
   get outputDelay(): number {
-    if (!this.core) {
+    if (!this.context) {
       throw new Error("The ai-coustics processor is closed");
     }
-    return this.core.outputDelay;
+    return this.context.getOutputDelay();
   }
 
   setParameter(parameter: ProcessorParameter, value: number): void {
     this.parameters.set(parameter, value);
-    this.core?.setParameter(parameter, value);
+    this.context?.setParameter(parameter, value);
   }
 
   updateModelParameters(parameters: ModelParameters): void {
@@ -144,14 +150,14 @@ export class AudioEnhancement extends FrameProcessor<AudioFrame> {
   }
 
   private applyParameters(): void {
-    if (!this.core) return;
+    if (!this.context) return;
     for (const [parameter, value] of this.parameters) {
-      this.core.setParameter(parameter, value);
+      this.context.setParameter(parameter, value);
     }
   }
 
   process(frame: AudioFrame): AudioFrame {
-    if (!this.isEnabled() || !this.core) {
+    if (!this.isEnabled() || !this.processor || !this.context) {
       return frame;
     }
 
@@ -168,17 +174,17 @@ export class AudioEnhancement extends FrameProcessor<AudioFrame> {
         this.streamFormat[1] !== streamFormat[1] ||
         this.streamFormat[2] !== streamFormat[2]
       ) {
-        this.core.initialize(...streamFormat);
+        this.processor.initialize(...streamFormat, false);
         this.streamFormat = streamFormat;
         this.needsReset = false;
         this.applyParameters();
         console.info(
           `ai-coustics initialized: ${streamFormat[0]} Hz, ${streamFormat[1]} ch, ` +
-            `${streamFormat[2]} samples/frame, output delay ${this.core.outputDelay} samples`,
+            `${streamFormat[2]} samples/frame, output delay ${this.context.getOutputDelay()} samples`,
         );
       }
       if (this.needsReset) {
-        this.core.reset();
+        this.context.reset();
         this.needsReset = false;
       }
 
@@ -190,7 +196,7 @@ export class AudioEnhancement extends FrameProcessor<AudioFrame> {
       }
 
       const samples = pcm16ToFloat32(frame.data);
-      this.core.processInterleaved(samples);
+      this.processor.processInterleaved(samples);
       const data = float32ToPcm16(samples);
       this.lastErrorMessage = null;
 
@@ -228,7 +234,8 @@ export class AudioEnhancement extends FrameProcessor<AudioFrame> {
 
   close(): void {
     this.filteringEnabled = false;
-    this.core = null;
+    this.context = null;
+    this.processor = null;
     this.streamFormat = null;
   }
 

@@ -10,7 +10,7 @@ import numpy as np
 
 from livekit import rtc
 
-from ._model import EnhancerCore, ModelInput, load_model
+from ._model import ModelInput, load_model
 from .log import logger
 
 _SLOW_WARNING_INTERVAL = 10.0
@@ -50,8 +50,6 @@ class AudioEnhancement(rtc.FrameProcessor[rtc.AudioFrame]):
     sample rate, channel count, and frame size with the first frame.
     """
 
-    _core_factory = EnhancerCore
-
     def __init__(
         self,
         *,
@@ -66,7 +64,12 @@ class AudioEnhancement(rtc.FrameProcessor[rtc.AudioFrame]):
         self._model = load_model(model, download_dir=download_dir)
         self._license_key = _license_key(license_key)
         self._otel_config = otel_config
-        self._core: EnhancerCore | None = self._create_core()
+        self._processor: aic_sdk.Processor | None = aic_sdk.Processor(
+            self._model,
+            self._license_key,
+            otel_config=self._otel_config,
+        )
+        self._context: aic_sdk.ProcessorContext | None = self._processor.get_processor_context()
         self._parameters: list[tuple[aic_sdk.ProcessorParameter, float]] = []
         self._model_parameters = model_parameters or ModelParameters()
         self._format: tuple[int, int, int] | None = None
@@ -75,20 +78,24 @@ class AudioEnhancement(rtc.FrameProcessor[rtc.AudioFrame]):
         self._last_error_message: str | None = None
         self._last_slow_warning = 0.0
 
+        self._validate_license()
+
         if enhancement_level is not None:
             self._model_parameters.enhancement_level = enhancement_level
         if bypass is not None:
             self._model_parameters.bypass = bypass
         self.update_model_parameters(self._model_parameters)
 
-    def _create_core(self) -> EnhancerCore:
-        core = self._core_factory(
-            model=self._model,
-            license_key=self._license_key,
-            otel_config=self._otel_config,
-        )
-        core.validate_license()
-        return core
+    def _validate_license(self) -> None:
+        """Force model authorization before a LiveKit call begins."""
+
+        assert self._processor is not None
+        assert self._context is not None
+        config = aic_sdk.ProcessorConfig.optimal(self._model, num_channels=1)
+        self._processor.initialize(config)
+        silence = np.zeros((config.num_channels, config.num_frames), dtype=np.float32)
+        self._processor.process(silence)
+        self._context.reset()
 
     @property
     def enabled(self) -> bool:
@@ -104,17 +111,17 @@ class AudioEnhancement(rtc.FrameProcessor[rtc.AudioFrame]):
     def processor_context(self) -> aic_sdk.ProcessorContext:
         """The SDK context for advanced parameter and delay access."""
 
-        if self._core is None:
+        if self._context is None:
             raise RuntimeError("The ai-coustics processor is closed")
-        return self._core.context
+        return self._context
 
     @property
     def output_delay(self) -> int:
         """Current SDK output delay, in samples at the configured sample rate."""
 
-        if self._core is None:
+        if self._context is None:
             raise RuntimeError("The ai-coustics processor is closed")
-        return self._core.output_delay
+        return self._context.get_output_delay()
 
     def set_parameter(self, parameter: aic_sdk.ProcessorParameter, value: float) -> None:
         """Set a raw SDK Processor parameter and persist it across reconfiguration."""
@@ -125,8 +132,8 @@ class AudioEnhancement(rtc.FrameProcessor[rtc.AudioFrame]):
                 break
         else:
             self._parameters.append((parameter, value))
-        if self._core is not None:
-            self._core.set_parameter(parameter, value)
+        if self._context is not None:
+            self._context.set_parameter(parameter, value)
 
     def update_model_parameters(self, parameters: ModelParameters) -> None:
         """Apply a partial model-parameter update immediately and on future formats."""
@@ -147,12 +154,12 @@ class AudioEnhancement(rtc.FrameProcessor[rtc.AudioFrame]):
             )
 
     def _apply_parameters(self) -> None:
-        assert self._core is not None
+        assert self._context is not None
         for parameter, value in self._parameters:
-            self._core.set_parameter(parameter, value)
+            self._context.set_parameter(parameter, value)
 
     def _process(self, frame: rtc.AudioFrame) -> rtc.AudioFrame:
-        if not self.enabled or self._core is None:
+        if not self.enabled or self._processor is None or self._context is None:
             return frame
 
         started = time.perf_counter()
@@ -163,7 +170,14 @@ class AudioEnhancement(rtc.FrameProcessor[rtc.AudioFrame]):
                 frame.samples_per_channel,
             )
             if self._format != stream_format:
-                self._core.initialize(*stream_format)
+                self._processor.initialize(
+                    aic_sdk.ProcessorConfig(
+                        sample_rate=frame.sample_rate,
+                        num_channels=frame.num_channels,
+                        num_frames=frame.samples_per_channel,
+                        allow_variable_frames=False,
+                    )
+                )
                 self._format = stream_format
                 self._needs_reset = False
                 self._apply_parameters()
@@ -171,10 +185,10 @@ class AudioEnhancement(rtc.FrameProcessor[rtc.AudioFrame]):
                     "ai-coustics initialized: %d Hz, %d ch, %d samples/frame, "
                     "output delay %d samples",
                     *stream_format,
-                    self._core.output_delay,
+                    self._context.get_output_delay(),
                 )
             if self._needs_reset:
-                self._core.reset()
+                self._context.reset()
                 self._needs_reset = False
 
             samples = _pcm16_to_float32(frame.data)
@@ -185,7 +199,7 @@ class AudioEnhancement(rtc.FrameProcessor[rtc.AudioFrame]):
                 )
 
             planar = samples.reshape(frame.samples_per_channel, frame.num_channels).T.copy()
-            processed = self._core.process(planar)
+            processed = self._processor.process(planar)
             interleaved = processed.T.reshape(-1)
         except Exception as error:
             self._log_error(f"{type(error).__name__}: {error}")
@@ -219,7 +233,8 @@ class AudioEnhancement(rtc.FrameProcessor[rtc.AudioFrame]):
 
     def _close(self) -> None:
         self._enabled = False
-        self._core = None
+        self._context = None
+        self._processor = None
         self._format = None
 
 
