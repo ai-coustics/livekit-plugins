@@ -87,6 +87,7 @@ cd python
 uv sync --dev
 uv run pytest tests/test_processor.py
 uv run pytest tests/test_integration.py  # requires AIC_SDK_LICENSE
+uv run pytest tests/test_e2e_room.py      # also requires a local LiveKit server
 uv run ruff check .
 uv run mypy
 
@@ -94,6 +95,39 @@ cd ../node
 npm install
 npm test
 npm run test:integration                 # requires AIC_SDK_LICENSE
+npm run test:e2e                         # also requires a local LiveKit server
 npm run check
 npm run build
 ```
+
+### End-to-end tests
+
+The end-to-end tests connect a synthetic microphone publisher and a model-free `AgentSession` to
+a real LiveKit room. They verify that RoomIO invokes the real SDK-backed Processor, that processing
+continues after the SDK authentication grace period, and that RoomIO closes the Processor.
+
+Start LiveKit in a separate terminal. A native server is the simplest option on macOS; Linux can
+use either the native server or the container:
+
+```bash
+livekit-server --dev
+
+# Linux container alternative. Keep the version aligned with CI.
+docker run --rm --network host livekit/livekit-server:v1.13.1 --dev
+```
+
+Dev mode uses `ws://127.0.0.1:7880`, API key `devkey`, and API secret `secret`. Those are the test
+defaults, so only the SDK license is required when using the local server:
+
+```bash
+export AIC_SDK_LICENSE=...
+
+cd python
+uv run pytest tests/test_e2e_room.py -q
+
+cd ../node
+npm run test:e2e
+```
+
+Set `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` to target another test server. Do not
+run the E2E test against a production LiveKit project.
