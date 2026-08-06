@@ -84,22 +84,6 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
             self._context.reset()
         self._enabled = value
 
-    @property
-    def processor_context(self) -> aic_sdk.ProcessorContext:
-        """The SDK context for advanced parameter and delay access."""
-
-        if self._context is None:
-            raise RuntimeError("The ai-coustics processor is closed")
-        return self._context
-
-    @property
-    def output_delay(self) -> int:
-        """Current SDK output delay, in samples at the configured sample rate."""
-
-        if self._context is None:
-            raise RuntimeError("The ai-coustics processor is closed")
-        return self._context.get_output_delay()
-
     def set_parameters(self, parameters: ProcessorParameters) -> None:
         """Apply a partial Processor-parameter update."""
 

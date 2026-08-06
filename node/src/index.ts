@@ -1,8 +1,4 @@
-export {
-  Model,
-  ProcessorParameter,
-  type ProcessorContext,
-} from "./sdk.js";
+export { Model } from "./sdk.js";
 export {
   float32ToPcm16,
   pcm16ToFloat32,

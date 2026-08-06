@@ -49,7 +49,6 @@ describeIf("native Processor integration", () => {
     expect(outputs.every((output) => output.samplesPerChannel === samplesPerFrame)).toBe(
       true,
     );
-    expect(enhancer.outputDelay).toBeGreaterThan(0);
     const inputTail = Array.from({ length: 20 }, (_, offset) =>
       Array.from(frame(offset + 20).data),
     ).flat();

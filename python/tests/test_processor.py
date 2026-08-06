@@ -134,7 +134,6 @@ def test_processes_one_complete_stereo_livekit_frame() -> None:
     )
     expected = (aic_sdk.ProcessorParameter.EnhancementLevel, 0.75)
     assert processor.context.parameters.count(expected) == 1
-    assert enhancer.output_delay == 42
 
 
 def test_reinitializes_when_any_frame_geometry_changes() -> None:
@@ -198,11 +197,11 @@ def test_processing_error_returns_original_and_deduplicates_log(
 
 def test_close_releases_native_processor() -> None:
     enhancer = create_enhancer()
+    frame = make_frame()
     enhancer._close()
 
     assert enhancer.enabled is False
-    with pytest.raises(RuntimeError, match="closed"):
-        _ = enhancer.processor_context
+    assert enhancer._process(frame) is frame
 
 
 def test_requires_license(monkeypatch: pytest.MonkeyPatch) -> None:

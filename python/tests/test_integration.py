@@ -50,7 +50,6 @@ def test_real_processor_with_downloaded_model_and_fifty_ms_frames(
 
     assert all(output.samples_per_channel == SAMPLES_PER_FRAME for output in outputs)
     assert all(output.sample_rate == SAMPLE_RATE for output in outputs)
-    assert enhancer.output_delay > 0
     inputs = np.concatenate(
         [np.frombuffer(_frame(index).data, dtype=np.int16) for index in range(20, 40)]
     )

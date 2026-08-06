@@ -79,20 +79,6 @@ export class Processor extends FrameProcessor<AudioFrame> {
     this.filteringEnabled = enabled;
   }
 
-  get processorContext(): ProcessorContext {
-    if (!this.context) {
-      throw new Error("The ai-coustics processor is closed");
-    }
-    return this.context;
-  }
-
-  get outputDelay(): number {
-    if (!this.context) {
-      throw new Error("The ai-coustics processor is closed");
-    }
-    return this.context.getOutputDelay();
-  }
-
   setParameters(parameters: ProcessorParameters): void {
     if (!this.context) return;
     if (parameters.enhancementLevel !== undefined) {

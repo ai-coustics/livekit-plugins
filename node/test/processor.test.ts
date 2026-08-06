@@ -122,7 +122,6 @@ describe("Processor", () => {
     expect(processor.context.parameters.filter(([key]) => key === 1)).toEqual([
       [1, 0.75],
     ]);
-    expect(enhancer.outputDelay).toBe(42);
   });
 
   it("wraps Processor construction errors", () => {
@@ -214,7 +213,7 @@ describe("Processor", () => {
     expect(enhancer.process(frame)).toBe(frame);
     expect(errorSpy).toHaveBeenCalledTimes(1);
     enhancer.close();
-    expect(() => enhancer.processorContext).toThrow("closed");
+    expect(enhancer.process(frame)).toBe(frame);
     errorSpy.mockRestore();
   });
 

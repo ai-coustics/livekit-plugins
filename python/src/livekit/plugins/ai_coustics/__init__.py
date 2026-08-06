@@ -1,6 +1,6 @@
 from importlib.metadata import PackageNotFoundError, version
 
-from aic_sdk import Model, ProcessorContext, ProcessorParameter
+from aic_sdk import Model
 from livekit.agents import Plugin
 
 from .log import logger
@@ -22,9 +22,7 @@ Plugin.register_plugin(AICousticsPlugin())
 __all__ = [
     "AICousticsPlugin",
     "Model",
-    "ProcessorContext",
     "Processor",
     "ProcessorParameters",
-    "ProcessorParameter",
     "__version__",
 ]

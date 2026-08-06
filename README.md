@@ -75,11 +75,10 @@ const noiseCancellation = new Processor({
 Pass `noiseCancellation` anywhere LiveKit accepts a `FrameProcessor<AudioFrame>`.
 `licenseKey` can be passed explicitly instead of using `AIC_SDK_LICENSE`.
 
-Both implementations expose runtime `ProcessorParameters`, plus the underlying Processor context
-(`processor_context` in Python, `processorContext` in Node) for advanced access and output-delay
-inspection. Apply partial runtime updates with `set_parameters` / `setParameters`; the SDK context
-retains values across stream reconfiguration. Use bypass for latency-compensated passthrough;
-disabling the processor returns immediate, undelayed input.
+Both implementations expose runtime `ProcessorParameters`. Apply partial runtime updates with
+`set_parameters` / `setParameters`; the SDK retains values across stream reconfiguration. Use
+bypass for latency-compensated passthrough; disabling the processor returns immediate, undelayed
+input.
 
 ## Development
 
