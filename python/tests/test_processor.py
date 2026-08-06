@@ -41,6 +41,7 @@ class FakeProcessor:
         self.blocks: list[np.ndarray] = []
         self.gain = 1.0
         self.error: Exception | None = None
+        self.terminate_calls = 0
         self.instances.append(self)
 
     def get_context(self) -> FakeContext:
@@ -54,6 +55,9 @@ class FakeProcessor:
             raise self.error
         self.blocks.append(block.copy())
         return block * self.gain
+
+    def terminate_session(self) -> None:
+        self.terminate_calls += 1
 
 
 @pytest.fixture(autouse=True)
@@ -198,11 +202,14 @@ def test_processing_error_returns_original_and_deduplicates_log(
     assert sum("boom" in record.getMessage() for record in caplog.records) == 1
 
 
-def test_close_releases_native_processor() -> None:
+def test_close_terminates_and_releases_native_processor() -> None:
     enhancer = create_enhancer()
+    processor = FakeProcessor.instances[0]
     frame = make_frame()
     enhancer._close()
+    enhancer._close()
 
+    assert processor.terminate_calls == 1
     assert enhancer.enabled is False
     assert enhancer._process(frame) is frame
 

@@ -196,6 +196,14 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
 
     def _close(self) -> None:
         self._enabled = False
+        processor = self._processor
+
+        if processor is not None:
+            try:
+                processor.terminate_session()
+            except Exception as error:
+                logger.error("Failed to terminate ai-coustics Processor session: %s", error)
+
         self._context = None
         self._processor = None
         self._format = None
