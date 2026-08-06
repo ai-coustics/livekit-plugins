@@ -11,9 +11,10 @@ scope for this first version.
 
 ## Design
 
-The plugins use the public ai-coustics SDK directly. Pass either an artifact model ID or a local
-`.aicmodel` path. Model IDs are downloaded into `~/.cache/aic-sdk/models`; explicit file paths are
-the fully offline option because resolving an ID may refresh the artifact manifest.
+The plugins use the public ai-coustics SDK directly. `Processor` accepts an already-loaded SDK
+`Model`, never a model ID or file path. Both packages expose the SDK's `Model.from_file` /
+`Model.fromFile` and `Model.download` APIs so applications can choose explicitly when and where
+models are downloaded and loaded.
 
 Model loading and native Processor construction happen when the filter is constructed. Any
 synchronous SDK construction error is raised with its original error attached. Backend
@@ -23,10 +24,6 @@ reveals the complete stream geometry. Every LiveKit frame is processed in one fi
 This uses the SDK's own frame adapter, preserves frame shape and metadata, and measured lower
 latency than enabling the SDK's variable-frame mode.
 
-For deployment builds, the exported `download_model` / `downloadModel` helpers can prefetch an
-artifact ID into a chosen directory. Pass the returned path to the processor at runtime to avoid
-artifact-manifest access when a worker starts.
-
 ## Python
 
 Install the package from `python/`, set `AIC_SDK_LICENSE`, and construct the processor before
@@ -35,13 +32,16 @@ starting the agent:
 ```python
 from livekit.plugins import ai_coustics
 
+model_path = ai_coustics.Model.download("quail-vf-2.2-l-16khz", "./models")
+model = ai_coustics.Model.from_file(model_path)
+
 noise_cancellation = ai_coustics.Processor(
-    model="quail-vf-2.2-l-16khz",  # artifact ID, downloaded and cached
+    model=model,
     processor_parameters=ai_coustics.ProcessorParameters(enhancement_level=1.0),
 )
 
-# For offline deployment, pass an explicit file path instead:
-# noise_cancellation = ai_coustics.Processor(model="./models/quail.aicmodel")
+# For a model provisioned during deployment, skip the download:
+# model = ai_coustics.Model.from_file("./models/quail.aicmodel")
 ```
 
 Pass `noise_cancellation` anywhere LiveKit accepts an
@@ -59,14 +59,17 @@ Install the package from `node/`, set `AIC_SDK_LICENSE`, and construct the filte
 the agent:
 
 ```ts
-import { Processor } from "@ai-coustics/livekit-agents";
+import { Model, Processor } from "@ai-coustics/livekit-agents";
+
+const modelPath = Model.download("quail-vf-2.2-l-16khz", "./models");
+const model = Model.fromFile(modelPath);
 
 const noiseCancellation = new Processor({
-  model: "quail-vf-2.2-l-16khz", // artifact ID, downloaded and cached
+  model,
   processorParameters: { enhancementLevel: 1.0 },
 });
 
-// For offline deployment, use: model: "./models/quail.aicmodel"
+// For a provisioned model, use: Model.fromFile("./models/quail.aicmodel")
 ```
 
 Pass `noiseCancellation` anywhere LiveKit accepts a `FrameProcessor<AudioFrame>`.

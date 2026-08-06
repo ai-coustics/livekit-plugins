@@ -87,10 +87,11 @@ vi.mock("@ai-coustics/aic-sdk", () => ({
 }));
 
 import {
+  Model,
   Processor,
   float32ToPcm16,
   pcm16ToFloat32,
-} from "../src/processor.js";
+} from "../src/index.js";
 
 describe("Processor", () => {
   beforeEach(() => {
@@ -220,25 +221,20 @@ describe("Processor", () => {
     errorSpy.mockRestore();
   });
 
-  it("resolves model IDs through the cache and paths directly", () => {
-    new Processor({
-      model: "quail-vf-2.2-l-16khz",
-      licenseKey: "test-license",
-      downloadDir: "/tmp/aic-test-models",
-    });
+  it("exposes SDK model download and file loading", () => {
+    const modelPath = Model.download(
+      "quail-vf-2.2-l-16khz",
+      "/tmp/aic-test-models",
+    );
+    const model = Model.fromFile(modelPath);
+
+    expect(model).toBeInstanceOf(sdk.FakeModel);
     expect(sdk.FakeModel.downloadCalls).toEqual([
       ["quail-vf-2.2-l-16khz", "/tmp/aic-test-models"],
     ]);
     expect(sdk.FakeModel.fromFileCalls.at(-1)).toBe(
       "/tmp/aic-test-models/quail-vf-2.2-l-16khz.aicmodel",
     );
-
-    new Processor({
-      model: "/models/local.aicmodel",
-      licenseKey: "test-license",
-    });
-    expect(sdk.FakeModel.downloadCalls).toHaveLength(1);
-    expect(sdk.FakeModel.fromFileCalls.at(-1)).toBe("/models/local.aicmodel");
   });
 });
 

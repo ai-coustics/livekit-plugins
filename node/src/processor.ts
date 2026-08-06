@@ -1,11 +1,7 @@
 import { AudioFrame, FrameProcessor } from "@livekit/rtc-node";
 
 import {
-  DEFAULT_DOWNLOAD_DIR,
-  loadModel,
-  type ModelInput,
-} from "./model.js";
-import {
+  type Model,
   type OtelConfig,
   Processor as AicProcessor,
   type ProcessorContext,
@@ -21,11 +17,10 @@ export interface ProcessorParameters {
 }
 
 export interface ProcessorOptions {
-  /** SDK Model, artifact model ID, or local `.aicmodel` path. */
-  model: ModelInput;
+  /** Loaded ai-coustics SDK Model. */
+  model: Model;
   licenseKey?: string;
   processorParameters?: ProcessorParameters;
-  downloadDir?: string;
   otelConfig?: OtelConfig;
 }
 
@@ -65,13 +60,9 @@ export class Processor extends FrameProcessor<AudioFrame> {
   constructor(options: ProcessorOptions) {
     super();
     const licenseKey = resolveLicenseKey(options.licenseKey);
-    const model = loadModel(
-      options.model,
-      options.downloadDir ?? DEFAULT_DOWNLOAD_DIR,
-    );
     try {
       this.processor = new AicProcessor(
-        model,
+        options.model,
         licenseKey,
         options.otelConfig,
       );

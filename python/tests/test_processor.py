@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from unittest.mock import patch
 
 import aic_sdk
@@ -9,7 +8,7 @@ import numpy as np
 import pytest
 
 from livekit import rtc
-from livekit.plugins.ai_coustics import Processor, ProcessorParameters
+from livekit.plugins.ai_coustics import Model, Processor, ProcessorParameters
 
 
 @dataclass
@@ -65,10 +64,6 @@ def fake_native_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "livekit.plugins.ai_coustics.processor.aic_sdk.Processor",
         FakeProcessor,
-    )
-    monkeypatch.setattr(
-        "livekit.plugins.ai_coustics.processor.load_model",
-        lambda model, **_kwargs: model,
     )
 
 
@@ -218,25 +213,22 @@ def test_requires_license(monkeypatch: pytest.MonkeyPatch) -> None:
         Processor(model=object())  # type: ignore[arg-type]
 
 
-def test_model_id_download_and_path_loading() -> None:
+def test_exposes_sdk_model_download_and_file_loading() -> None:
     with (
-        patch(
-            "livekit.plugins.ai_coustics._model.aic_sdk.Model.download",
+        patch.object(
+            Model,
+            "download",
             return_value="/cache/model.aicmodel",
         ) as download,
-        patch(
-            "livekit.plugins.ai_coustics._model.aic_sdk.Model.from_file",
+        patch.object(
+            Model,
+            "from_file",
             return_value=object(),
         ) as from_file,
     ):
-        from livekit.plugins.ai_coustics._model import load_model
+        model_path = Model.download("quail-vf-2.2-l-16khz", "/tmp/aic-test-models")
+        model = Model.from_file(model_path)
 
-        load_model("quail-vf-2.2-l-16khz", download_dir="/tmp/aic-test-models")
-        download.assert_called_once_with("quail-vf-2.2-l-16khz", Path("/tmp/aic-test-models"))
-        from_file.assert_called_once_with(Path("/cache/model.aicmodel"))
-
-        download.reset_mock()
-        from_file.reset_mock()
-        load_model("/models/local.aicmodel")
-        download.assert_not_called()
-        from_file.assert_called_once_with(Path("/models/local.aicmodel"))
+        assert model is from_file.return_value
+        download.assert_called_once_with("quail-vf-2.2-l-16khz", "/tmp/aic-test-models")
+        from_file.assert_called_once_with("/cache/model.aicmodel")

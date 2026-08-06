@@ -3,14 +3,12 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass
-from os import PathLike
 
 import aic_sdk
 import numpy as np
 
 from livekit import rtc
 
-from ._model import ModelInput, load_model
 from .log import logger
 
 _SLOW_WARNING_INTERVAL = 10.0
@@ -53,17 +51,15 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
     def __init__(
         self,
         *,
-        model: ModelInput,
+        model: aic_sdk.Model,
         license_key: str | None = None,
         processor_parameters: ProcessorParameters | None = None,
-        download_dir: str | PathLike[str] | None = None,
         otel_config: aic_sdk.OtelConfig | None = None,
     ) -> None:
-        loaded_model = load_model(model, download_dir=download_dir)
         resolved_license_key = _license_key(license_key)
         try:
             processor = aic_sdk.Processor(
-                loaded_model,
+                model,
                 resolved_license_key,
                 otel_config=otel_config,
             )
@@ -117,6 +113,7 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
                 break
         else:
             self._parameters.append((parameter, value))
+
         if self._context is not None:
             self._context.set_parameter(parameter, value)
 
@@ -129,6 +126,7 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
                 raise ValueError(f"enhancement_level must be in [0.0, 1.0], got {level}")
             self._processor_parameters.enhancement_level = level
             self.set_parameter(aic_sdk.ProcessorParameter.EnhancementLevel, level)
+
         if parameters.bypass is not None:
             if not isinstance(parameters.bypass, bool):
                 raise TypeError("bypass must be a bool")
@@ -154,6 +152,7 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
                 frame.num_channels,
                 frame.samples_per_channel,
             )
+
             if self._format != stream_format:
                 self._processor.initialize(
                     aic_sdk.ProcessorConfig(
@@ -172,6 +171,7 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
                     *stream_format,
                     self._context.get_output_delay(),
                 )
+
             if self._needs_reset:
                 self._context.reset()
                 self._needs_reset = False

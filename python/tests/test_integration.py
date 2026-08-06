@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -12,6 +13,7 @@ pytestmark = pytest.mark.integration
 
 LICENSE = os.getenv("AIC_SDK_LICENSE")
 MODEL_ID = os.getenv("AIC_INTEGRATION_MODEL_ID", "quail-vf-2.2-s-16khz")
+MODEL_DIR = Path(os.getenv("AIC_INTEGRATION_MODEL_DIR", "~/.cache/aic-sdk/models")).expanduser()
 SAMPLE_RATE = 16000
 SAMPLES_PER_FRAME = 800  # LiveKit Agents' current 50 ms default input frame.
 
@@ -32,9 +34,18 @@ def _frame(index: int, *, channels: int = 1) -> rtc.AudioFrame:
     )
 
 
+@pytest.fixture(scope="module")
+def model() -> ai_coustics.Model:
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    model_path = ai_coustics.Model.download(MODEL_ID, MODEL_DIR)
+    return ai_coustics.Model.from_file(model_path)
+
+
 @pytest.mark.skipif(not LICENSE, reason="AIC_SDK_LICENSE is required")
-def test_real_processor_with_model_id_and_fifty_ms_frames() -> None:
-    enhancer = ai_coustics.Processor(model=MODEL_ID)
+def test_real_processor_with_downloaded_model_and_fifty_ms_frames(
+    model: ai_coustics.Model,
+) -> None:
+    enhancer = ai_coustics.Processor(model=model)
     outputs = [enhancer._process(_frame(index)) for index in range(40)]
 
     assert all(output.samples_per_channel == SAMPLES_PER_FRAME for output in outputs)
@@ -50,9 +61,9 @@ def test_real_processor_with_model_id_and_fifty_ms_frames() -> None:
 
 
 @pytest.mark.skipif(not LICENSE, reason="AIC_SDK_LICENSE is required")
-def test_real_processor_stereo_and_runtime_parameters() -> None:
+def test_real_processor_stereo_and_runtime_parameters(model: ai_coustics.Model) -> None:
     enhancer = ai_coustics.Processor(
-        model=MODEL_ID,
+        model=model,
         processor_parameters=ai_coustics.ProcessorParameters(bypass=True),
     )
     output = enhancer._process(_frame(0, channels=2))

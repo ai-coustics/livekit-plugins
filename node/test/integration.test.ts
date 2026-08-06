@@ -1,11 +1,17 @@
 import { AudioFrame } from "@livekit/rtc-node";
-import { describe, expect, it } from "vitest";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { beforeAll, describe, expect, it } from "vitest";
 
-import { Processor } from "../src/index.js";
+import { Model, Processor } from "../src/index.js";
 
 const describeIf = process.env.AIC_SDK_LICENSE ? describe : describe.skip;
 const modelId =
   process.env.AIC_INTEGRATION_MODEL_ID ?? "quail-vf-2.2-s-16khz";
+const modelDir =
+  process.env.AIC_INTEGRATION_MODEL_DIR ??
+  path.join(os.homedir(), ".cache", "aic-sdk", "models");
 const sampleRate = 16000;
 const samplesPerFrame = 800; // LiveKit Agents' current 50 ms default.
 
@@ -27,8 +33,15 @@ function frame(index: number, channels = 1): AudioFrame {
 }
 
 describeIf("native Processor integration", () => {
-  it("processes 50 ms model-ID frames", () => {
-    const enhancer = new Processor({ model: modelId });
+  let model: ReturnType<typeof Model.fromFile>;
+
+  beforeAll(() => {
+    fs.mkdirSync(modelDir, { recursive: true });
+    model = Model.fromFile(Model.download(modelId, modelDir));
+  });
+
+  it("processes 50 ms frames with a downloaded model", () => {
+    const enhancer = new Processor({ model });
     const outputs = Array.from({ length: 40 }, (_, index) =>
       enhancer.process(frame(index)),
     );
@@ -46,7 +59,7 @@ describeIf("native Processor integration", () => {
 
   it("supports stereo and runtime bypass updates", () => {
     const enhancer = new Processor({
-      model: modelId,
+      model,
       processorParameters: { bypass: true },
     });
     const output = enhancer.process(frame(0, 2));

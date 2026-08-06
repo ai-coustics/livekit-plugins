@@ -11,9 +11,3 @@ export {
   type ProcessorOptions,
   type ProcessorParameters,
 } from "./processor.js";
-export {
-  DEFAULT_DOWNLOAD_DIR,
-  downloadModel,
-  loadModel,
-  type ModelInput,
-} from "./model.js";
