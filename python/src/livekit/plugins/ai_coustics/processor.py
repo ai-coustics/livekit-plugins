@@ -56,8 +56,6 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
         model: ModelInput,
         license_key: str | None = None,
         model_parameters: ModelParameters | None = None,
-        enhancement_level: float | None = None,
-        bypass: bool | None = None,
         download_dir: str | PathLike[str] | None = None,
         otel_config: aic_sdk.OtelConfig | None = None,
     ) -> None:
@@ -82,10 +80,6 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
         self._last_error_message: str | None = None
         self._last_slow_warning = 0.0
 
-        if enhancement_level is not None:
-            self._model_parameters.enhancement_level = enhancement_level
-        if bypass is not None:
-            self._model_parameters.bypass = bypass
         self.update_model_parameters(self._model_parameters)
 
     @property

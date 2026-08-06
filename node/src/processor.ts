@@ -25,8 +25,6 @@ export interface ProcessorOptions {
   model: ModelInput;
   licenseKey?: string;
   modelParameters?: ModelParameters;
-  enhancementLevel?: number;
-  bypass?: boolean;
   downloadDir?: string;
   otelConfig?: OtelConfig;
 }
@@ -85,12 +83,6 @@ export class Processor extends FrameProcessor<AudioFrame> {
     }
     this.context = this.processor.getProcessorContext();
     this.modelParameters = { ...options.modelParameters };
-    if (options.enhancementLevel !== undefined) {
-      this.modelParameters.enhancementLevel = options.enhancementLevel;
-    }
-    if (options.bypass !== undefined) {
-      this.modelParameters.bypass = options.bypass;
-    }
     this.updateModelParameters(this.modelParameters);
   }
 
