@@ -132,3 +132,31 @@ CI starts the pinned upstream LiveKit server image with host networking and dev 
 server is readiness-checked before the tests, its logs are printed even after a failure, and the
 container is always removed. Integration jobs do not run for pull requests from forks so the SDK
 license is not exposed.
+
+## Releases
+
+Python and Node.js packages are released together and must always have the same version. To prepare
+a release:
+
+1. Update `project.version` in `python/pyproject.toml` and run `uv lock` from `python/`.
+2. Run `npm version <version> --no-git-tag-version` from `node/` to update `package.json` and
+   `package-lock.json`.
+3. Commit the version changes, merge them to `main`, and wait for CI to pass.
+4. Create and push an unprefixed semantic version tag:
+
+   ```bash
+   git tag 0.1.0
+   git push origin 0.1.0
+   ```
+
+The release workflow verifies that the tag points to a commit on `main` and matches both package
+versions. It then builds both distributions, publishes `ai-coustics-livekit` to PyPI and
+`@ai-coustics/livekit-agents` to npm, and creates a GitHub release containing all distribution
+artifacts. The GitHub release is created only after both registry publications succeed.
+
+Repository and registry configuration required by the publish jobs:
+
+- A GitHub `publish` environment, optionally with required reviewers.
+- A `PYPI_API_TOKEN` secret available to that environment.
+- An npm trusted publisher for `@ai-coustics/livekit-agents`, restricted to this repository,
+  `.github/workflows/release.yml`, and the `publish` environment.
