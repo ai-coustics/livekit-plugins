@@ -8,6 +8,8 @@ version = "0.1.0"
 description = "ai-coustics noise cancellation for LiveKit Agents"
 readme = "README.md"
 requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "ai-coustics GmbH", email = "info@ai-coustics.com" }]
 keywords = ["ai-coustics", "audio", "livekit", "noise-cancellation", "speech"]
 classifiers = [
@@ -44,6 +46,7 @@ namespaces = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["integration: tests that require a real SDK license and model download"]
 
 [tool.ruff]
 line-length = 100
@@ -53,7 +56,7 @@ target-version = "py310"
 select = ["E", "F", "I", "UP"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 strict = true
 packages = ["livekit.plugins.ai_coustics"]
 

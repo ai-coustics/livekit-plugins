@@ -1,18 +1,19 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Iterable
+import time
+from dataclasses import dataclass
 from os import PathLike
-from typing import TypeAlias
 
 import aic_sdk
 import numpy as np
 
 from livekit import rtc
 
+from ._model import EnhancerCore, ModelInput, load_model
 from .log import logger
 
-ModelInput: TypeAlias = aic_sdk.Model | str | PathLike[str]
+_SLOW_WARNING_INTERVAL = 10.0
 
 
 def _license_key(value: str | None) -> str:
@@ -24,62 +25,70 @@ def _license_key(value: str | None) -> str:
     return key
 
 
-def _model(value: ModelInput) -> aic_sdk.Model:
-    if isinstance(value, (str, PathLike)):
-        return aic_sdk.Model.from_file(value)
-    return value
-
-
 def _pcm16_to_float32(data: memoryview) -> np.ndarray:
     return np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
 
 
 def _float32_to_pcm16(data: np.ndarray) -> bytes:
-    # 1.0 cannot be represented by signed 16-bit PCM. Clamp it to 32767/32768.
     clipped = np.clip(data, -1.0, 32767.0 / 32768.0)
     return bytes(np.rint(clipped * 32768.0).astype(np.int16).tobytes())
+
+
+@dataclass
+class ModelParameters:
+    """Runtime-adjustable enhancement parameters; ``None`` retains the current value."""
+
+    enhancement_level: float | None = None
+    bypass: bool | None = None
 
 
 class AudioEnhancement(rtc.FrameProcessor[rtc.AudioFrame]):
     """LiveKit audio frame processor backed by :class:`aic_sdk.Processor`.
 
-    Model loading and license validation happen in the constructor. SDK initialization is
-    deferred until the first frame because LiveKit supplies the stream's sample rate and channel
-    count there.
+    Model resolution and license validation are eager so configuration errors fail before audio
+    starts. Processor format initialization remains lazy because LiveKit supplies the stream's
+    sample rate, channel count, and frame size with the first frame.
     """
+
+    _core_factory = EnhancerCore
 
     def __init__(
         self,
         *,
         model: ModelInput,
         license_key: str | None = None,
+        model_parameters: ModelParameters | None = None,
         enhancement_level: float | None = None,
-        bypass: float | None = None,
+        bypass: bool | None = None,
+        download_dir: str | PathLike[str] | None = None,
         otel_config: aic_sdk.OtelConfig | None = None,
     ) -> None:
-        self._model = _model(model)
+        self._model = load_model(model, download_dir=download_dir)
         self._license_key = _license_key(license_key)
         self._otel_config = otel_config
-        self._processor = aic_sdk.Processor(
-            self._model,
-            self._license_key,
-            otel_config=otel_config,
-        )
-        self._context = self._processor.get_processor_context()
-        # PyO3 enums implement equality but are intentionally not hashable.
+        self._core: EnhancerCore | None = self._create_core()
         self._parameters: list[tuple[aic_sdk.ProcessorParameter, float]] = []
-        self._config: tuple[int, int] | None = None
-        self._optimal_num_frames = 0
+        self._model_parameters = model_parameters or ModelParameters()
+        self._format: tuple[int, int, int] | None = None
         self._enabled = True
+        self._needs_reset = False
         self._last_error_message: str | None = None
+        self._last_slow_warning = 0.0
 
         if enhancement_level is not None:
-            self.set_parameter(
-                aic_sdk.ProcessorParameter.EnhancementLevel,
-                enhancement_level,
-            )
+            self._model_parameters.enhancement_level = enhancement_level
         if bypass is not None:
-            self.set_parameter(aic_sdk.ProcessorParameter.Bypass, bypass)
+            self._model_parameters.bypass = bypass
+        self.update_model_parameters(self._model_parameters)
+
+    def _create_core(self) -> EnhancerCore:
+        core = self._core_factory(
+            model=self._model,
+            license_key=self._license_key,
+            otel_config=self._otel_config,
+        )
+        core.validate_license()
+        return core
 
     @property
     def enabled(self) -> bool:
@@ -87,22 +96,28 @@ class AudioEnhancement(rtc.FrameProcessor[rtc.AudioFrame]):
 
     @enabled.setter
     def enabled(self, value: bool) -> None:
+        if value and not self._enabled:
+            self._needs_reset = True
         self._enabled = value
 
     @property
     def processor_context(self) -> aic_sdk.ProcessorContext:
         """The SDK context for advanced parameter and delay access."""
 
-        return self._context
+        if self._core is None:
+            raise RuntimeError("The ai-coustics processor is closed")
+        return self._core.context
 
     @property
     def output_delay(self) -> int:
         """Current SDK output delay, in samples at the configured sample rate."""
 
-        return self._context.get_output_delay()
+        if self._core is None:
+            raise RuntimeError("The ai-coustics processor is closed")
+        return self._core.output_delay
 
     def set_parameter(self, parameter: aic_sdk.ProcessorParameter, value: float) -> None:
-        """Set a Processor parameter now and after future stream reconfiguration."""
+        """Set a raw SDK Processor parameter and persist it across reconfiguration."""
 
         for index, (current, _current_value) in enumerate(self._parameters):
             if current == parameter:
@@ -110,39 +125,57 @@ class AudioEnhancement(rtc.FrameProcessor[rtc.AudioFrame]):
                 break
         else:
             self._parameters.append((parameter, value))
-        if self._config is not None:
-            self._context.set_parameter(parameter, value)
+        if self._core is not None:
+            self._core.set_parameter(parameter, value)
 
-    def update_parameters(
-        self,
-        parameters: Iterable[tuple[aic_sdk.ProcessorParameter, float]],
-    ) -> None:
-        """Set multiple Processor parameters."""
+    def update_model_parameters(self, parameters: ModelParameters) -> None:
+        """Apply a partial model-parameter update immediately and on future formats."""
 
-        for parameter, value in parameters:
-            self.set_parameter(parameter, value)
+        if parameters.enhancement_level is not None:
+            level = parameters.enhancement_level
+            if not 0.0 <= level <= 1.0:
+                raise ValueError(f"enhancement_level must be in [0.0, 1.0], got {level}")
+            self._model_parameters.enhancement_level = level
+            self.set_parameter(aic_sdk.ProcessorParameter.EnhancementLevel, level)
+        if parameters.bypass is not None:
+            if not isinstance(parameters.bypass, bool):
+                raise TypeError("bypass must be a bool")
+            self._model_parameters.bypass = parameters.bypass
+            self.set_parameter(
+                aic_sdk.ProcessorParameter.Bypass,
+                1.0 if parameters.bypass else 0.0,
+            )
 
-    def _initialize(self, sample_rate: int, num_channels: int) -> None:
-        config = aic_sdk.ProcessorConfig.optimal(
-            self._model,
-            sample_rate=sample_rate,
-            num_channels=num_channels,
-            allow_variable_frames=True,
-        )
-        self._processor.initialize(config)
-        self._config = (sample_rate, num_channels)
-        self._optimal_num_frames = config.num_frames
+    def _apply_parameters(self) -> None:
+        assert self._core is not None
         for parameter, value in self._parameters:
-            self._context.set_parameter(parameter, value)
+            self._core.set_parameter(parameter, value)
 
     def _process(self, frame: rtc.AudioFrame) -> rtc.AudioFrame:
-        if not self.enabled:
+        if not self.enabled or self._core is None:
             return frame
 
+        started = time.perf_counter()
         try:
-            stream_config = (frame.sample_rate, frame.num_channels)
-            if self._config != stream_config:
-                self._initialize(*stream_config)
+            stream_format = (
+                frame.sample_rate,
+                frame.num_channels,
+                frame.samples_per_channel,
+            )
+            if self._format != stream_format:
+                self._core.initialize(*stream_format)
+                self._format = stream_format
+                self._needs_reset = False
+                self._apply_parameters()
+                logger.info(
+                    "ai-coustics initialized: %d Hz, %d ch, %d samples/frame, "
+                    "output delay %d samples",
+                    *stream_format,
+                    self._core.output_delay,
+                )
+            if self._needs_reset:
+                self._core.reset()
+                self._needs_reset = False
 
             samples = _pcm16_to_float32(frame.data)
             expected_samples = frame.samples_per_channel * frame.num_channels
@@ -151,47 +184,53 @@ class AudioEnhancement(rtc.FrameProcessor[rtc.AudioFrame]):
                     f"AudioFrame contains {samples.size} samples, expected {expected_samples}"
                 )
 
-            # LiveKit audio is interleaved. The Python SDK expects channels x frames.
             planar = samples.reshape(frame.samples_per_channel, frame.num_channels).T.copy()
-            processed = np.empty_like(planar)
-            block_size = self._optimal_num_frames
-            for start in range(0, frame.samples_per_channel, block_size):
-                end = min(start + block_size, frame.samples_per_channel)
-                processed[:, start:end] = self._processor.process(planar[:, start:end])
-
+            processed = self._core.process(planar)
             interleaved = processed.T.reshape(-1)
-            self._last_error_message = None
-            return rtc.AudioFrame(
-                data=_float32_to_pcm16(interleaved),
-                sample_rate=frame.sample_rate,
-                num_channels=frame.num_channels,
-                samples_per_channel=frame.samples_per_channel,
-                userdata=frame.userdata,
-            )
         except Exception as error:
-            self._log_error(f"ai-coustics processing failed: {error}")
+            self._log_error(f"{type(error).__name__}: {error}")
             return frame
+
+        self._last_error_message = None
+        elapsed = time.perf_counter() - started
+        frame_duration = frame.samples_per_channel / frame.sample_rate
+        if elapsed > frame_duration and started - self._last_slow_warning > _SLOW_WARNING_INTERVAL:
+            self._last_slow_warning = started
+            logger.warning(
+                "ai-coustics processing is slower than realtime (%.1f ms for a %.1f ms frame); "
+                "consider a smaller model",
+                elapsed * 1000,
+                frame_duration * 1000,
+            )
+
+        return rtc.AudioFrame(
+            data=_float32_to_pcm16(interleaved),
+            sample_rate=frame.sample_rate,
+            num_channels=frame.num_channels,
+            samples_per_channel=frame.samples_per_channel,
+            userdata=frame.userdata,
+        )
 
     def _log_error(self, message: str) -> None:
         if message == self._last_error_message:
             return
         self._last_error_message = message
-        logger.exception(message)
+        logger.error("ai-coustics processing failed; passing audio through: %s", message)
 
     def _close(self) -> None:
-        if self._config is not None:
-            try:
-                self._context.reset()
-            except Exception as error:
-                self._log_error(f"Failed to reset the ai-coustics processor: {error}")
+        self._enabled = False
+        self._core = None
+        self._format = None
 
 
 def audio_enhancement(
     *,
     model: ModelInput,
     license_key: str | None = None,
+    model_parameters: ModelParameters | None = None,
     enhancement_level: float | None = None,
-    bypass: float | None = None,
+    bypass: bool | None = None,
+    download_dir: str | PathLike[str] | None = None,
     otel_config: aic_sdk.OtelConfig | None = None,
 ) -> AudioEnhancement:
     """Create an ai-coustics noise cancellation frame processor."""
@@ -199,7 +238,9 @@ def audio_enhancement(
     return AudioEnhancement(
         model=model,
         license_key=license_key,
+        model_parameters=model_parameters,
         enhancement_level=enhancement_level,
         bypass=bypass,
+        download_dir=download_dir,
         otel_config=otel_config,
     )

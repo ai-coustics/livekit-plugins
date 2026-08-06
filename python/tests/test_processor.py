@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+from pathlib import Path
 from unittest.mock import patch
 
 import aic_sdk
@@ -7,156 +9,211 @@ import numpy as np
 import pytest
 
 from livekit import rtc
-from livekit.plugins.ai_coustics import AudioEnhancement
+from livekit.plugins.ai_coustics import AudioEnhancement, ModelParameters
 
 
-class FakeConfig:
-    def __init__(self, num_frames: int = 2) -> None:
-        self.num_frames = num_frames
-
-
+@dataclass
 class FakeContext:
-    def __init__(self) -> None:
-        self.parameters: list[tuple[object, float]] = []
-        self.reset_count = 0
+    parameters: list[tuple[object, float]] = field(default_factory=list)
 
     def set_parameter(self, parameter: object, value: float) -> None:
         self.parameters.append((parameter, value))
 
-    def get_output_delay(self) -> int:
-        return 42
+
+class FakeCore:
+    instances: list[FakeCore] = []
+
+    def __init__(
+        self,
+        *,
+        model: object,
+        license_key: str,
+        otel_config: object | None = None,
+    ) -> None:
+        self.model = model
+        self.license_key = license_key
+        self.otel_config = otel_config
+        self.context = FakeContext()
+        self.validate_count = 0
+        self.inits: list[tuple[int, int, int]] = []
+        self.blocks: list[np.ndarray] = []
+        self.reset_count = 0
+        self.gain = 1.0
+        self.error: Exception | None = None
+        self.output_delay = 42
+        self.instances.append(self)
+
+    def validate_license(self) -> None:
+        self.validate_count += 1
+
+    def initialize(self, sample_rate: int, channels: int, frames: int) -> None:
+        self.inits.append((sample_rate, channels, frames))
+
+    def process(self, block: np.ndarray) -> np.ndarray:
+        if self.error is not None:
+            raise self.error
+        self.blocks.append(block.copy())
+        return block * self.gain
 
     def reset(self) -> None:
         self.reset_count += 1
 
-
-class FakeProcessor:
-    def __init__(self) -> None:
-        self.context = FakeContext()
-        self.configs: list[FakeConfig] = []
-        self.blocks: list[np.ndarray] = []
-
-    def get_processor_context(self) -> FakeContext:
-        return self.context
-
-    def initialize(self, config: FakeConfig) -> None:
-        self.configs.append(config)
-
-    def process(self, block: np.ndarray) -> np.ndarray:
-        self.blocks.append(block.copy())
-        return block.copy()
+    def set_parameter(self, parameter: object, value: float) -> None:
+        self.context.set_parameter(parameter, value)
 
 
-@pytest.fixture
-def enhancer() -> tuple[AudioEnhancement, FakeProcessor, FakeContext, list[dict[str, object]]]:
-    processor = FakeProcessor()
-    optimal_calls: list[dict[str, object]] = []
-
-    def optimal(_model: object, **kwargs: object) -> FakeConfig:
-        optimal_calls.append(kwargs)
-        return FakeConfig()
-
-    with (
-        patch("livekit.plugins.ai_coustics.processor.aic_sdk.Processor", return_value=processor),
-        patch(
-            "livekit.plugins.ai_coustics.processor.aic_sdk.ProcessorConfig.optimal",
-            side_effect=optimal,
-        ),
-    ):
-        instance = AudioEnhancement(
-            model=object(),  # type: ignore[arg-type]
-            license_key="test-license",
-            enhancement_level=0.75,
-        )
-        yield instance, processor, processor.context, optimal_calls
+@pytest.fixture(autouse=True)
+def fake_native_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
+    FakeCore.instances.clear()
+    monkeypatch.setattr(AudioEnhancement, "_core_factory", FakeCore)
+    monkeypatch.setattr(
+        "livekit.plugins.ai_coustics.processor.load_model",
+        lambda model, **_kwargs: model,
+    )
 
 
-def test_processes_interleaved_audio_in_optimal_blocks(
-    enhancer: tuple[AudioEnhancement, FakeProcessor, FakeContext, list[dict[str, object]]],
-) -> None:
-    instance, processor, context, optimal_calls = enhancer
-    pcm = np.array([1000, -1000, 2000, -2000, 3000, -3000], dtype=np.int16)
-    userdata = {"source": "test"}
-    frame = rtc.AudioFrame(
-        data=pcm.tobytes(),
-        sample_rate=48000,
-        num_channels=2,
-        samples_per_channel=3,
+def make_frame(
+    *,
+    sample_rate: int = 16000,
+    channels: int = 1,
+    frames: int = 800,
+    data: np.ndarray | None = None,
+    userdata: dict[str, object] | None = None,
+) -> rtc.AudioFrame:
+    samples = data if data is not None else np.arange(frames * channels, dtype=np.int16)
+    return rtc.AudioFrame(
+        data=samples.tobytes(),
+        sample_rate=sample_rate,
+        num_channels=channels,
+        samples_per_channel=frames,
         userdata=userdata,
     )
 
-    output = instance._process(frame)
+
+def create_enhancer(**kwargs: object) -> AudioEnhancement:
+    return AudioEnhancement(
+        model=object(),  # type: ignore[arg-type]
+        license_key="test-license",
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+
+def test_validates_license_eagerly() -> None:
+    create_enhancer()
+
+    assert FakeCore.instances[0].validate_count == 1
+
+
+def test_processes_one_complete_stereo_livekit_frame() -> None:
+    enhancer = create_enhancer(model_parameters=ModelParameters(enhancement_level=0.75))
+    pcm = np.array([1000, -1000, 2000, -2000, 3000, -3000], dtype=np.int16)
+    userdata = {"source": "test"}
+    output = enhancer._process(make_frame(channels=2, frames=3, data=pcm, userdata=userdata))
+    core = FakeCore.instances[0]
 
     assert np.array_equal(np.frombuffer(output.data, dtype=np.int16), pcm)
     assert output.userdata is userdata
-    assert [block.shape for block in processor.blocks] == [(2, 2), (2, 1)]
-    assert np.array_equal(processor.blocks[0], np.array([[1000, 2000], [-1000, -2000]]) / 32768)
-    assert optimal_calls == [
-        {
-            "sample_rate": 48000,
-            "num_channels": 2,
-            "allow_variable_frames": True,
-        }
+    assert core.inits == [(16000, 2, 3)]
+    assert [block.shape for block in core.blocks] == [(2, 3)]
+    assert np.array_equal(
+        core.blocks[0], np.array([[1000, 2000, 3000], [-1000, -2000, -3000]]) / 32768
+    )
+    expected = (aic_sdk.ProcessorParameter.EnhancementLevel, 0.75)
+    assert core.context.parameters.count(expected) == 2  # eager set + after format init
+    assert enhancer.output_delay == 42
+
+
+def test_reinitializes_when_any_frame_geometry_changes() -> None:
+    enhancer = create_enhancer()
+    enhancer._process(make_frame(frames=800))
+    enhancer._process(make_frame(frames=800))
+    enhancer._process(make_frame(frames=160))
+    enhancer._process(make_frame(sample_rate=48000, frames=2400))
+
+    assert FakeCore.instances[0].inits == [
+        (16000, 1, 800),
+        (16000, 1, 160),
+        (48000, 1, 2400),
     ]
-    assert context.parameters == [(aic_sdk.ProcessorParameter.EnhancementLevel, 0.75)]
-    assert instance.output_delay == 42
 
 
-def test_reinitializes_only_when_stream_format_changes(
-    enhancer: tuple[AudioEnhancement, FakeProcessor, FakeContext, list[dict[str, object]]],
+def test_parameter_updates_merge_validate_and_survive_reinit() -> None:
+    enhancer = create_enhancer(model_parameters=ModelParameters(bypass=True))
+    enhancer._process(make_frame())
+    enhancer.update_model_parameters(ModelParameters(enhancement_level=0.9))
+    enhancer._process(make_frame(frames=160))
+    core = FakeCore.instances[0]
+
+    assert core.context.parameters.count((aic_sdk.ProcessorParameter.Bypass, 1.0)) == 3
+    assert core.context.parameters.count((aic_sdk.ProcessorParameter.EnhancementLevel, 0.9)) == 2
+    with pytest.raises(ValueError, match="enhancement_level"):
+        enhancer.update_model_parameters(ModelParameters(enhancement_level=1.1))
+
+
+def test_disabled_processor_is_passthrough_and_reenable_resets() -> None:
+    enhancer = create_enhancer()
+    enhancer._process(make_frame())
+    core = FakeCore.instances[0]
+    before = len(core.blocks)
+    frame = make_frame()
+
+    enhancer.enabled = False
+    assert enhancer._process(frame) is frame
+    assert len(core.blocks) == before
+    enhancer.enabled = True
+    enhancer._process(frame)
+    assert core.reset_count == 1
+
+
+def test_processing_error_returns_original_and_deduplicates_log(
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    instance, processor, _context, optimal_calls = enhancer
+    enhancer = create_enhancer()
+    core = FakeCore.instances[0]
+    core.error = RuntimeError("boom")
+    frame = make_frame()
 
-    for samples_per_channel in (4, 3):
-        instance._process(
-            rtc.AudioFrame(
-                data=np.zeros(samples_per_channel, dtype=np.int16).tobytes(),
-                sample_rate=16000,
-                num_channels=1,
-                samples_per_channel=samples_per_channel,
-            )
-        )
-    instance._process(
-        rtc.AudioFrame(
-            data=np.zeros(3, dtype=np.int16).tobytes(),
-            sample_rate=48000,
-            num_channels=1,
-            samples_per_channel=3,
-        )
-    )
+    with caplog.at_level("ERROR", logger="livekit.plugins.ai_coustics"):
+        assert enhancer._process(frame) is frame
+        assert enhancer._process(frame) is frame
 
-    assert len(processor.configs) == 2
-    assert [call["sample_rate"] for call in optimal_calls] == [16000, 48000]
+    assert sum("boom" in record.getMessage() for record in caplog.records) == 1
 
 
-def test_disabled_processor_is_passthrough(
-    enhancer: tuple[AudioEnhancement, FakeProcessor, FakeContext, list[dict[str, object]]],
-) -> None:
-    instance, processor, _context, _optimal_calls = enhancer
-    frame = rtc.AudioFrame(
-        data=b"\x00\x00", sample_rate=16000, num_channels=1, samples_per_channel=1
-    )
-    instance.enabled = False
+def test_close_releases_native_core() -> None:
+    enhancer = create_enhancer()
+    enhancer._close()
 
-    assert instance._process(frame) is frame
-    assert processor.blocks == []
-
-
-def test_close_resets_initialized_processor(
-    enhancer: tuple[AudioEnhancement, FakeProcessor, FakeContext, list[dict[str, object]]],
-) -> None:
-    instance, _processor, context, _optimal_calls = enhancer
-    frame = rtc.AudioFrame(
-        data=b"\x00\x00", sample_rate=16000, num_channels=1, samples_per_channel=1
-    )
-    instance._process(frame)
-
-    instance._close()
-
-    assert context.reset_count == 1
+    assert enhancer.enabled is False
+    with pytest.raises(RuntimeError, match="closed"):
+        _ = enhancer.processor_context
 
 
 def test_requires_license(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AIC_SDK_LICENSE", raising=False)
     with pytest.raises(ValueError, match="AIC_SDK_LICENSE"):
         AudioEnhancement(model=object())  # type: ignore[arg-type]
+
+
+def test_model_id_download_and_path_loading() -> None:
+    with (
+        patch(
+            "livekit.plugins.ai_coustics._model.aic_sdk.Model.download",
+            return_value="/cache/model.aicmodel",
+        ) as download,
+        patch(
+            "livekit.plugins.ai_coustics._model.aic_sdk.Model.from_file",
+            return_value=object(),
+        ) as from_file,
+    ):
+        from livekit.plugins.ai_coustics._model import load_model
+
+        load_model("quail-vf-2.2-l-16khz", download_dir="/tmp/aic-test-models")
+        download.assert_called_once_with("quail-vf-2.2-l-16khz", Path("/tmp/aic-test-models"))
+        from_file.assert_called_once_with(Path("/cache/model.aicmodel"))
+
+        download.reset_mock()
+        from_file.reset_mock()
+        load_model("/models/local.aicmodel")
+        download.assert_not_called()
+        from_file.assert_called_once_with(Path("/models/local.aicmodel"))

@@ -3,8 +3,9 @@ from importlib.metadata import PackageNotFoundError, version
 from aic_sdk import Model, OtelConfig, ProcessorContext, ProcessorParameter
 from livekit.agents import Plugin
 
+from ._model import DEFAULT_DOWNLOAD_DIR, ModelInput, download_model, load_model
 from .log import logger
-from .processor import AudioEnhancement, ModelInput, audio_enhancement
+from .processor import AudioEnhancement, ModelParameters, audio_enhancement
 
 try:
     __version__ = version("ai-coustics-livekit")
@@ -22,11 +23,15 @@ Plugin.register_plugin(AICousticsPlugin())
 __all__ = [
     "AICousticsPlugin",
     "AudioEnhancement",
+    "DEFAULT_DOWNLOAD_DIR",
     "Model",
     "ModelInput",
+    "ModelParameters",
     "OtelConfig",
     "ProcessorContext",
     "ProcessorParameter",
     "__version__",
     "audio_enhancement",
+    "download_model",
+    "load_model",
 ]

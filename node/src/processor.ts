@@ -1,21 +1,33 @@
 import { AudioFrame, FrameProcessor } from "@livekit/rtc-node";
 
 import {
-  Model,
+  DEFAULT_DOWNLOAD_DIR,
+  EnhancerCore,
+  loadModel,
+  type ModelInput,
+} from "./model.js";
+import {
   type OtelConfig,
-  Processor,
   type ProcessorContext,
   type ProcessorParameter,
   ProcessorParameter as ProcessorParameters,
 } from "./sdk.js";
 
-export type ModelInput = Model | string;
+const SLOW_WARNING_INTERVAL_MS = 10_000;
+
+export interface ModelParameters {
+  enhancementLevel?: number;
+  bypass?: boolean;
+}
 
 export interface AudioEnhancementParams {
+  /** SDK Model, artifact model ID, or local `.aicmodel` path. */
   model: ModelInput;
   licenseKey?: string;
+  modelParameters?: ModelParameters;
   enhancementLevel?: number;
-  bypass?: number;
+  bypass?: boolean;
+  downloadDir?: string;
   otelConfig?: OtelConfig;
 }
 
@@ -27,10 +39,6 @@ function resolveLicenseKey(value?: string): string {
     );
   }
   return key;
-}
-
-function resolveModel(value: ModelInput): Model {
-  return typeof value === "string" ? Model.fromFile(value) : value;
 }
 
 export function pcm16ToFloat32(data: Int16Array): Float32Array {
@@ -46,34 +54,45 @@ export function float32ToPcm16(data: Float32Array): Int16Array {
 
 /** LiveKit AudioFrame processor backed by the public ai-coustics SDK. */
 export class AudioEnhancement extends FrameProcessor<AudioFrame> {
-  private readonly model: Model;
   private readonly licenseKey: string;
   private readonly otelConfig?: OtelConfig;
-  private processor: InstanceType<typeof Processor> | null;
-  private context: ProcessorContext | null;
+  private readonly aicModel: ReturnType<typeof loadModel>;
+  private core: EnhancerCore | null;
   private readonly parameters = new Map<ProcessorParameter, number>();
-  private streamConfig: { sampleRate: number; channels: number } | null = null;
-  private optimalNumFrames = 0;
+  private readonly modelParameters: ModelParameters;
+  private streamFormat: [number, number, number] | null = null;
   private filteringEnabled = true;
+  private needsReset = false;
   private lastErrorMessage: string | null = null;
+  private lastSlowWarning = 0;
 
   constructor(params: AudioEnhancementParams) {
     super();
-    this.model = resolveModel(params.model);
     this.licenseKey = resolveLicenseKey(params.licenseKey);
     this.otelConfig = params.otelConfig;
-    this.processor = new Processor(this.model, this.licenseKey, this.otelConfig);
-    this.context = this.processor.getProcessorContext();
-
+    this.aicModel = loadModel(
+      params.model,
+      params.downloadDir ?? DEFAULT_DOWNLOAD_DIR,
+    );
+    this.core = this.createCore();
+    this.modelParameters = { ...params.modelParameters };
     if (params.enhancementLevel !== undefined) {
-      this.setParameter(
-        ProcessorParameters.EnhancementLevel,
-        params.enhancementLevel,
-      );
+      this.modelParameters.enhancementLevel = params.enhancementLevel;
     }
     if (params.bypass !== undefined) {
-      this.setParameter(ProcessorParameters.Bypass, params.bypass);
+      this.modelParameters.bypass = params.bypass;
     }
+    this.updateModelParameters(this.modelParameters);
+  }
+
+  private createCore(): EnhancerCore {
+    const core = new EnhancerCore(
+      this.aicModel,
+      this.licenseKey,
+      this.otelConfig,
+    );
+    core.validateLicense();
+    return core;
   }
 
   isEnabled(): boolean {
@@ -81,53 +100,86 @@ export class AudioEnhancement extends FrameProcessor<AudioFrame> {
   }
 
   setEnabled(enabled: boolean): void {
+    if (enabled && !this.filteringEnabled) {
+      this.needsReset = true;
+    }
     this.filteringEnabled = enabled;
   }
 
   get processorContext(): ProcessorContext {
-    if (!this.context) {
+    if (!this.core) {
       throw new Error("The ai-coustics processor is closed");
     }
-    return this.context;
+    return this.core.context;
   }
 
   get outputDelay(): number {
-    return this.processorContext.getOutputDelay();
+    if (!this.core) {
+      throw new Error("The ai-coustics processor is closed");
+    }
+    return this.core.outputDelay;
   }
 
   setParameter(parameter: ProcessorParameter, value: number): void {
     this.parameters.set(parameter, value);
-    if (this.streamConfig) {
-      this.processorContext.setParameter(parameter, value);
+    this.core?.setParameter(parameter, value);
+  }
+
+  updateModelParameters(parameters: ModelParameters): void {
+    if (parameters.enhancementLevel !== undefined) {
+      const level = parameters.enhancementLevel;
+      if (level < 0 || level > 1) {
+        throw new Error(`enhancementLevel must be in [0.0, 1.0], got ${level}`);
+      }
+      this.modelParameters.enhancementLevel = level;
+      this.setParameter(ProcessorParameters.EnhancementLevel, level);
+    }
+    if (parameters.bypass !== undefined) {
+      if (typeof parameters.bypass !== "boolean") {
+        throw new TypeError("bypass must be a boolean");
+      }
+      this.modelParameters.bypass = parameters.bypass;
+      this.setParameter(ProcessorParameters.Bypass, parameters.bypass ? 1 : 0);
     }
   }
 
-  private initialize(sampleRate: number, channels: number): void {
-    if (!this.processor) {
-      this.processor = new Processor(this.model, this.licenseKey, this.otelConfig);
-      this.context = this.processor.getProcessorContext();
-    }
-
-    this.optimalNumFrames = this.model.getOptimalNumFrames(sampleRate);
-    this.processor.initialize(sampleRate, channels, this.optimalNumFrames, true);
-    this.streamConfig = { sampleRate, channels };
+  private applyParameters(): void {
+    if (!this.core) return;
     for (const [parameter, value] of this.parameters) {
-      this.processorContext.setParameter(parameter, value);
+      this.core.setParameter(parameter, value);
     }
   }
 
   process(frame: AudioFrame): AudioFrame {
-    if (!this.isEnabled()) {
+    if (!this.isEnabled() || !this.core) {
       return frame;
     }
 
+    const started = performance.now();
     try {
+      const streamFormat: [number, number, number] = [
+        frame.sampleRate,
+        frame.channels,
+        frame.samplesPerChannel,
+      ];
       if (
-        !this.streamConfig ||
-        this.streamConfig.sampleRate !== frame.sampleRate ||
-        this.streamConfig.channels !== frame.channels
+        !this.streamFormat ||
+        this.streamFormat[0] !== streamFormat[0] ||
+        this.streamFormat[1] !== streamFormat[1] ||
+        this.streamFormat[2] !== streamFormat[2]
       ) {
-        this.initialize(frame.sampleRate, frame.channels);
+        this.core.initialize(...streamFormat);
+        this.streamFormat = streamFormat;
+        this.needsReset = false;
+        this.applyParameters();
+        console.info(
+          `ai-coustics initialized: ${streamFormat[0]} Hz, ${streamFormat[1]} ch, ` +
+            `${streamFormat[2]} samples/frame, output delay ${this.core.outputDelay} samples`,
+        );
+      }
+      if (this.needsReset) {
+        this.core.reset();
+        this.needsReset = false;
       }
 
       const expectedSamples = frame.samplesPerChannel * frame.channels;
@@ -138,38 +190,46 @@ export class AudioEnhancement extends FrameProcessor<AudioFrame> {
       }
 
       const samples = pcm16ToFloat32(frame.data);
-      const samplesPerBlock = this.optimalNumFrames * frame.channels;
-      for (let start = 0; start < samples.length; start += samplesPerBlock) {
-        const end = Math.min(start + samplesPerBlock, samples.length);
-        this.processor!.processInterleaved(samples.subarray(start, end));
+      this.core.processInterleaved(samples);
+      const data = float32ToPcm16(samples);
+      this.lastErrorMessage = null;
+
+      const elapsedMs = performance.now() - started;
+      const frameDurationMs =
+        (frame.samplesPerChannel / frame.sampleRate) * 1000;
+      if (
+        elapsedMs > frameDurationMs &&
+        started - this.lastSlowWarning > SLOW_WARNING_INTERVAL_MS
+      ) {
+        this.lastSlowWarning = started;
+        console.warn(
+          `ai-coustics processing is slower than realtime ` +
+            `(${elapsedMs.toFixed(1)} ms for a ${frameDurationMs.toFixed(1)} ms frame); ` +
+            `consider a smaller model`,
+        );
       }
 
-      this.lastErrorMessage = null;
       return new AudioFrame(
-        float32ToPcm16(samples),
+        data,
         frame.sampleRate,
         frame.channels,
         frame.samplesPerChannel,
         frame.userdata,
       );
     } catch (error) {
-      this.logError(`ai-coustics processing failed: ${String(error)}`);
+      const message =
+        error instanceof Error
+          ? `${error.name}: ${error.message}`
+          : `Error: ${String(error)}`;
+      this.logError(message);
       return frame;
     }
   }
 
   close(): void {
-    if (this.context && this.streamConfig) {
-      try {
-        this.context.reset();
-      } catch (error) {
-        this.logError(`Failed to reset the ai-coustics processor: ${String(error)}`);
-      }
-    }
     this.filteringEnabled = false;
-    this.streamConfig = null;
-    this.context = null;
-    this.processor = null;
+    this.core = null;
+    this.streamFormat = null;
   }
 
   private logError(message: string): void {
@@ -177,7 +237,7 @@ export class AudioEnhancement extends FrameProcessor<AudioFrame> {
       return;
     }
     this.lastErrorMessage = message;
-    console.error(message);
+    console.error(`ai-coustics processing failed; passing audio through: ${message}`);
   }
 }
 
