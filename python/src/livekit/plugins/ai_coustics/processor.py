@@ -68,7 +68,6 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
         self._context: aic_sdk.ProcessorContext | None = self._processor.get_processor_context()
         self._format: tuple[int, int, int] | None = None
         self._enabled = True
-        self._needs_reset = False
         self._last_error_message: str | None = None
         self._last_slow_warning = 0.0
 
@@ -81,8 +80,8 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
 
     @enabled.setter
     def enabled(self, value: bool) -> None:
-        if value and not self._enabled:
-            self._needs_reset = True
+        if value and not self._enabled and self._context is not None:
+            self._context.reset()
         self._enabled = value
 
     @property
@@ -143,17 +142,12 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
                     )
                 )
                 self._format = stream_format
-                self._needs_reset = False
                 logger.info(
                     "ai-coustics initialized: %d Hz, %d ch, %d samples/frame, "
                     "output delay %d samples",
                     *stream_format,
                     self._context.get_output_delay(),
                 )
-
-            if self._needs_reset:
-                self._context.reset()
-                self._needs_reset = False
 
             samples = _pcm16_to_float32(frame.data)
             expected_samples = frame.samples_per_channel * frame.num_channels

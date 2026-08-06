@@ -166,7 +166,7 @@ def test_parameter_updates_validate_and_are_not_reapplied() -> None:
         enhancer.set_parameters(ProcessorParameters(enhancement_level=1.1))
 
 
-def test_disabled_processor_is_passthrough_and_reenable_resets() -> None:
+def test_disabled_processor_is_passthrough_and_reenable_resets_immediately() -> None:
     enhancer = create_enhancer()
     enhancer._process(make_frame())
     processor = FakeProcessor.instances[0]
@@ -177,8 +177,8 @@ def test_disabled_processor_is_passthrough_and_reenable_resets() -> None:
     assert enhancer._process(frame) is frame
     assert len(processor.blocks) == before
     enhancer.enabled = True
-    enhancer._process(frame)
     assert processor.context.reset_count == 1
+    enhancer._process(frame)
 
 
 def test_processing_error_returns_original_and_deduplicates_log(

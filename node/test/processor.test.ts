@@ -182,7 +182,7 @@ describe("Processor", () => {
     );
   });
 
-  it("passes through while disabled and resets when re-enabled", () => {
+  it("passes through while disabled and resets immediately when re-enabled", () => {
     const enhancer = new Processor({
       model: new sdk.FakeModel(),
       licenseKey: "test-license",
@@ -196,8 +196,8 @@ describe("Processor", () => {
     expect(enhancer.process(frame)).toBe(frame);
     expect(processor.blocks).toHaveLength(before);
     enhancer.setEnabled(true);
-    enhancer.process(frame);
     expect(processor.context.resetCount).toBe(1);
+    enhancer.process(frame);
   });
 
   it("deduplicates processing errors and releases on close", () => {

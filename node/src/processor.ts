@@ -48,7 +48,6 @@ export class Processor extends FrameProcessor<AudioFrame> {
   private context: ProcessorContext | null;
   private streamFormat: [number, number, number] | null = null;
   private filteringEnabled = true;
-  private needsReset = false;
   private lastErrorMessage: string | null = null;
   private lastSlowWarning = 0;
 
@@ -74,8 +73,8 @@ export class Processor extends FrameProcessor<AudioFrame> {
   }
 
   setEnabled(enabled: boolean): void {
-    if (enabled && !this.filteringEnabled) {
-      this.needsReset = true;
+    if (enabled && !this.filteringEnabled && this.context) {
+      this.context.reset();
     }
     this.filteringEnabled = enabled;
   }
@@ -134,17 +133,11 @@ export class Processor extends FrameProcessor<AudioFrame> {
       ) {
         this.processor.initialize(...streamFormat, false);
         this.streamFormat = streamFormat;
-        this.needsReset = false;
         console.info(
           `ai-coustics initialized: ${streamFormat[0]} Hz, ${streamFormat[1]} ch, ` +
             `${streamFormat[2]} samples/frame, output delay ${this.context.getOutputDelay()} samples`,
         );
       }
-      if (this.needsReset) {
-        this.context.reset();
-        this.needsReset = false;
-      }
-
       const expectedSamples = frame.samplesPerChannel * frame.channels;
       if (frame.data.length !== expectedSamples) {
         throw new Error(
