@@ -67,15 +67,6 @@ def fake_native_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
         FakeProcessor,
     )
     monkeypatch.setattr(
-        "livekit.plugins.ai_coustics.processor.aic_sdk.ProcessorConfig.optimal",
-        lambda _model, num_channels: aic_sdk.ProcessorConfig(
-            sample_rate=16000,
-            num_channels=num_channels,
-            num_frames=2,
-            allow_variable_frames=False,
-        ),
-    )
-    monkeypatch.setattr(
         "livekit.plugins.ai_coustics.processor.load_model",
         lambda model, **_kwargs: model,
     )
@@ -107,13 +98,30 @@ def create_enhancer(**kwargs: object) -> AudioEnhancement:
     )
 
 
-def test_validates_license_eagerly() -> None:
+def test_constructs_processor_without_probe_frame() -> None:
     create_enhancer()
 
     processor = FakeProcessor.instances[0]
-    assert processor.inits == [(16000, 1, 2)]
-    assert [block.shape for block in processor.blocks] == [(1, 2)]
-    assert processor.context.reset_count == 1
+    assert processor.inits == []
+    assert processor.blocks == []
+    assert processor.context.reset_count == 0
+
+
+def test_wraps_processor_construction_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    sdk_error = RuntimeError("invalid license format")
+
+    def fail_processor(*_args: object, **_kwargs: object) -> None:
+        raise sdk_error
+
+    monkeypatch.setattr(
+        "livekit.plugins.ai_coustics.processor.aic_sdk.Processor",
+        fail_processor,
+    )
+
+    with pytest.raises(RuntimeError, match="Failed to create ai-coustics Processor") as exc_info:
+        create_enhancer()
+
+    assert exc_info.value.__cause__ is sdk_error
 
 
 def test_processes_one_complete_stereo_livekit_frame() -> None:
@@ -125,8 +133,8 @@ def test_processes_one_complete_stereo_livekit_frame() -> None:
 
     assert np.array_equal(np.frombuffer(output.data, dtype=np.int16), pcm)
     assert output.userdata is userdata
-    assert processor.inits == [(16000, 1, 2), (16000, 2, 3)]
-    assert [block.shape for block in processor.blocks] == [(1, 2), (2, 3)]
+    assert processor.inits == [(16000, 2, 3)]
+    assert [block.shape for block in processor.blocks] == [(2, 3)]
     assert np.array_equal(
         processor.blocks[-1],
         np.array([[1000, 2000, 3000], [-1000, -2000, -3000]]) / 32768,
@@ -144,7 +152,6 @@ def test_reinitializes_when_any_frame_geometry_changes() -> None:
     enhancer._process(make_frame(sample_rate=48000, frames=2400))
 
     assert FakeProcessor.instances[0].inits == [
-        (16000, 1, 2),
         (16000, 1, 800),
         (16000, 1, 160),
         (48000, 1, 2400),
@@ -178,7 +185,7 @@ def test_disabled_processor_is_passthrough_and_reenable_resets() -> None:
     assert len(processor.blocks) == before
     enhancer.enabled = True
     enhancer._process(frame)
-    assert processor.context.reset_count == 2  # validation + re-enable
+    assert processor.context.reset_count == 1
 
 
 def test_processing_error_returns_original_and_deduplicates_log(

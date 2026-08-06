@@ -45,8 +45,8 @@ class ModelParameters:
 class AudioEnhancement(rtc.FrameProcessor[rtc.AudioFrame]):
     """LiveKit audio frame processor backed by :class:`aic_sdk.Processor`.
 
-    Model resolution and license validation are eager so configuration errors fail before audio
-    starts. Processor format initialization remains lazy because LiveKit supplies the stream's
+    Model resolution and Processor construction are eager, while SDK backend authentication uses
+    its grace period. Format initialization remains lazy because LiveKit supplies the stream's
     sample rate, channel count, and frame size with the first frame.
     """
 
@@ -61,14 +61,18 @@ class AudioEnhancement(rtc.FrameProcessor[rtc.AudioFrame]):
         download_dir: str | PathLike[str] | None = None,
         otel_config: aic_sdk.OtelConfig | None = None,
     ) -> None:
-        self._model = load_model(model, download_dir=download_dir)
-        self._license_key = _license_key(license_key)
-        self._otel_config = otel_config
-        self._processor: aic_sdk.Processor | None = aic_sdk.Processor(
-            self._model,
-            self._license_key,
-            otel_config=self._otel_config,
-        )
+        loaded_model = load_model(model, download_dir=download_dir)
+        resolved_license_key = _license_key(license_key)
+        try:
+            processor = aic_sdk.Processor(
+                loaded_model,
+                resolved_license_key,
+                otel_config=otel_config,
+            )
+        except Exception as error:
+            raise RuntimeError(f"Failed to create ai-coustics Processor: {error}") from error
+
+        self._processor: aic_sdk.Processor | None = processor
         self._context: aic_sdk.ProcessorContext | None = self._processor.get_processor_context()
         self._parameters: list[tuple[aic_sdk.ProcessorParameter, float]] = []
         self._model_parameters = model_parameters or ModelParameters()
@@ -78,24 +82,11 @@ class AudioEnhancement(rtc.FrameProcessor[rtc.AudioFrame]):
         self._last_error_message: str | None = None
         self._last_slow_warning = 0.0
 
-        self._validate_license()
-
         if enhancement_level is not None:
             self._model_parameters.enhancement_level = enhancement_level
         if bypass is not None:
             self._model_parameters.bypass = bypass
         self.update_model_parameters(self._model_parameters)
-
-    def _validate_license(self) -> None:
-        """Force model authorization before a LiveKit call begins."""
-
-        assert self._processor is not None
-        assert self._context is not None
-        config = aic_sdk.ProcessorConfig.optimal(self._model, num_channels=1)
-        self._processor.initialize(config)
-        silence = np.zeros((config.num_channels, config.num_frames), dtype=np.float32)
-        self._processor.process(silence)
-        self._context.reset()
 
     @property
     def enabled(self) -> bool:

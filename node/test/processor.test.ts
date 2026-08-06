@@ -49,12 +49,16 @@ const sdk = vi.hoisted(() => {
   }
 
   class FakeProcessor {
+    static constructorError: Error | null = null;
     readonly context = new FakeContext();
     readonly initializations: Array<[number, number, number, boolean]> = [];
     readonly blocks: number[][] = [];
     error: Error | null = null;
 
     constructor() {
+      if (FakeProcessor.constructorError) {
+        throw FakeProcessor.constructorError;
+      }
       instances.push(this);
     }
 
@@ -93,18 +97,19 @@ describe("AudioEnhancement", () => {
     sdk.instances.length = 0;
     sdk.FakeModel.fromFileCalls.length = 0;
     sdk.FakeModel.downloadCalls.length = 0;
+    sdk.FakeProcessor.constructorError = null;
   });
 
-  it("validates eagerly and processes one complete LiveKit frame", () => {
+  it("constructs without a probe frame and processes one complete LiveKit frame", () => {
     const enhancer = new AudioEnhancement({
       model: new sdk.FakeModel(),
       licenseKey: "test-license",
       modelParameters: { enhancementLevel: 0.75 },
     });
     const processor = sdk.instances[0]!;
-    expect(processor.initializations).toEqual([[16000, 1, 2, false]]);
-    expect(processor.blocks.map((block) => block.length)).toEqual([2]);
-    expect(processor.context.resetCount).toBe(1);
+    expect(processor.initializations).toEqual([]);
+    expect(processor.blocks).toEqual([]);
+    expect(processor.context.resetCount).toBe(0);
 
     const input = new Int16Array([1000, -1000, 2000, -2000, 3000, -3000]);
     const userdata = { source: "test" };
@@ -121,6 +126,25 @@ describe("AudioEnhancement", () => {
     expect(enhancer.outputDelay).toBe(42);
   });
 
+  it("wraps Processor construction errors", () => {
+    const sdkError = new Error("invalid license format");
+    sdk.FakeProcessor.constructorError = sdkError;
+
+    try {
+      new AudioEnhancement({
+        model: new sdk.FakeModel(),
+        licenseKey: "bad-license",
+      });
+      throw new Error("expected construction to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain(
+        "Failed to create ai-coustics Processor",
+      );
+      expect((error as Error & { cause?: unknown }).cause).toBe(sdkError);
+    }
+  });
+
   it("reinitializes when any frame geometry changes", () => {
     const enhancer = new AudioEnhancement({
       model: new sdk.FakeModel(),
@@ -132,7 +156,7 @@ describe("AudioEnhancement", () => {
     enhancer.process(new AudioFrame(new Int16Array(160), 16000, 1, 160));
     enhancer.process(new AudioFrame(new Int16Array(2400), 48000, 1, 2400));
 
-    expect(processor.initializations.slice(1)).toEqual([
+    expect(processor.initializations).toEqual([
       [16000, 1, 800, false],
       [16000, 1, 160, false],
       [48000, 1, 2400, false],
@@ -175,7 +199,7 @@ describe("AudioEnhancement", () => {
     expect(processor.blocks).toHaveLength(before);
     enhancer.setEnabled(true);
     enhancer.process(frame);
-    expect(processor.context.resetCount).toBe(2); // validation + re-enable
+    expect(processor.context.resetCount).toBe(1);
   });
 
   it("deduplicates processing errors and releases on close", () => {

@@ -16,9 +16,10 @@ noise_cancellation = ai_coustics.audio_enhancement(
 ```
 
 Set `AIC_SDK_LICENSE` or pass `license_key=` explicitly. Artifact model IDs are downloaded and
-cached under `~/.cache/aic-sdk/models`. Model loading and license validation happen in the
-constructor, so create the filter during prewarm or before starting the session. Pass
-`noise_cancellation` wherever LiveKit accepts an `rtc.FrameProcessor[rtc.AudioFrame]`.
+cached under `~/.cache/aic-sdk/models`. Model loading and native Processor construction happen in
+the constructor; synchronous SDK construction errors fail immediately, while backend
+authentication uses the SDK's grace period. Pass `noise_cancellation` wherever LiveKit accepts an
+`rtc.FrameProcessor[rtc.AudioFrame]`.
 Use `ai_coustics.download_model(model_id, download_dir)` during a deployment build and pass its
 returned path at runtime when workers must start fully offline.
 

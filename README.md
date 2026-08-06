@@ -15,11 +15,13 @@ The plugins use the public ai-coustics SDK directly. Pass either an artifact mod
 `.aicmodel` path. Model IDs are downloaded into `~/.cache/aic-sdk/models`; explicit file paths are
 the fully offline option because resolving an ID may refresh the artifact manifest.
 
-Model loading and license validation happen when the filter is constructed, before a call starts.
-The native Processor is reconfigured when the first LiveKit frame reveals the complete stream
-geometry. Every LiveKit frame is processed in one fixed-size SDK call. This uses the SDK's own
-frame adapter, preserves frame shape and metadata, and measured lower latency than enabling the
-SDK's variable-frame mode.
+Model loading and native Processor construction happen when the filter is constructed. Any
+synchronous SDK construction error is raised with its original error attached. Backend
+authentication continues asynchronously during the SDK's grace period, so the plugin does not
+probe it by processing a throwaway frame. The Processor is configured when the first LiveKit frame
+reveals the complete stream geometry. Every LiveKit frame is processed in one fixed-size SDK call.
+This uses the SDK's own frame adapter, preserves frame shape and metadata, and measured lower
+latency than enabling the SDK's variable-frame mode.
 
 For deployment builds, the exported `download_model` / `downloadModel` helpers can prefetch an
 artifact ID into a chosen directory. Pass the returned path to the processor at runtime to avoid

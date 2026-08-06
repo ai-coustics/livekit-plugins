@@ -54,9 +54,6 @@ export function float32ToPcm16(data: Float32Array): Int16Array {
 
 /** LiveKit AudioFrame processor backed by the public ai-coustics SDK. */
 export class AudioEnhancement extends FrameProcessor<AudioFrame> {
-  private readonly licenseKey: string;
-  private readonly otelConfig?: OtelConfig;
-  private readonly aicModel: ReturnType<typeof loadModel>;
   private processor: InstanceType<typeof Processor> | null;
   private context: ProcessorContext | null;
   private readonly parameters = new Map<ProcessorParameter, number>();
@@ -69,19 +66,24 @@ export class AudioEnhancement extends FrameProcessor<AudioFrame> {
 
   constructor(params: AudioEnhancementParams) {
     super();
-    this.licenseKey = resolveLicenseKey(params.licenseKey);
-    this.otelConfig = params.otelConfig;
-    this.aicModel = loadModel(
+    const licenseKey = resolveLicenseKey(params.licenseKey);
+    const model = loadModel(
       params.model,
       params.downloadDir ?? DEFAULT_DOWNLOAD_DIR,
     );
-    this.processor = new Processor(
-      this.aicModel,
-      this.licenseKey,
-      this.otelConfig,
-    );
+    try {
+      this.processor = new Processor(
+        model,
+        licenseKey,
+        params.otelConfig,
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to create ai-coustics Processor: ${detail}`, {
+        cause: error,
+      });
+    }
     this.context = this.processor.getProcessorContext();
-    this.validateLicense();
     this.modelParameters = { ...params.modelParameters };
     if (params.enhancementLevel !== undefined) {
       this.modelParameters.enhancementLevel = params.enhancementLevel;
@@ -90,15 +92,6 @@ export class AudioEnhancement extends FrameProcessor<AudioFrame> {
       this.modelParameters.bypass = params.bypass;
     }
     this.updateModelParameters(this.modelParameters);
-  }
-
-  private validateLicense(): void {
-    if (!this.processor || !this.context) return;
-    const sampleRate = this.aicModel.getOptimalSampleRate();
-    const numFrames = this.aicModel.getOptimalNumFrames(sampleRate);
-    this.processor.initialize(sampleRate, 1, numFrames, false);
-    this.processor.processInterleaved(new Float32Array(numFrames));
-    this.context.reset();
   }
 
   isEnabled(): boolean {

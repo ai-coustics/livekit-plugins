@@ -16,9 +16,10 @@ const noiseCancellation = audioEnhancement({
 ```
 
 Set `AIC_SDK_LICENSE` or pass `licenseKey` explicitly. Artifact model IDs are downloaded and
-cached under `~/.cache/aic-sdk/models`. Model loading and license validation happen in the
-constructor, so create the filter before starting the session. Pass `noiseCancellation` wherever
-LiveKit accepts a `FrameProcessor<AudioFrame>`.
+cached under `~/.cache/aic-sdk/models`. Model loading and native Processor construction happen in
+the constructor; synchronous SDK construction errors fail immediately, while backend
+authentication uses the SDK's grace period. Pass `noiseCancellation` wherever LiveKit accepts a
+`FrameProcessor<AudioFrame>`.
 Use `downloadModel(modelId, downloadDir)` during a deployment build and pass its returned path at
 runtime when workers must start fully offline.
 
