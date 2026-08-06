@@ -70,3 +70,5 @@ def test_real_processor_stereo_and_runtime_parameters(model: ai_coustics.Model) 
 
     assert output.num_channels == 2
     assert output.samples_per_channel == SAMPLES_PER_FRAME
+    channels = np.frombuffer(output.data, dtype=np.int16).reshape(SAMPLES_PER_FRAME, 2)
+    assert np.array_equal(channels[:, 0], channels[:, 1])

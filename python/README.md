@@ -24,6 +24,9 @@ the SDK to fetch an artifact first. Synchronous SDK construction errors fail imm
 backend authentication uses the SDK's grace period. Pass `noise_cancellation` wherever LiveKit
 accepts an `rtc.FrameProcessor[rtc.AudioFrame]`.
 
+The underlying aic-sdk 3 Processor accepts mono audio. Multichannel LiveKit frames are downmixed
+to mono for processing, then the enhanced signal is duplicated across the original channel count.
+
 The distribution is named `ai-coustics-livekit`, while its import uses LiveKit's plugin namespace.
 It replaces `livekit-plugins-ai-coustics`; installing both packages in one environment is not
 supported because they provide the same `livekit.plugins.ai_coustics` import path.

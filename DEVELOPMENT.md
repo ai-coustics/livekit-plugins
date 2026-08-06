@@ -15,9 +15,10 @@ authentication continues asynchronously during the SDK's grace period, so the pl
 process a throwaway frame to probe the license.
 
 Processor format initialization is lazy because LiveKit supplies the complete stream geometry
-with the first frame. Each LiveKit frame is processed in one fixed-size SDK call. This uses the
-SDK's frame adapter, preserves the frame shape and metadata, and avoids the additional latency of
-the SDK's variable-frame mode.
+with the first frame. Each LiveKit frame is processed in one fixed-size SDK call, avoiding the
+additional latency of the SDK's variable-block-size mode. aic-sdk 3 processes mono audio only, so
+multichannel LiveKit frames are downmixed before processing and the enhanced signal is duplicated
+across the original channel count. This preserves the LiveKit frame geometry and metadata.
 
 Processing errors are logged and the original LiveKit frame is returned. This fail-open behavior
 keeps room audio flowing if the SDK rejects a frame or encounters a runtime error.
