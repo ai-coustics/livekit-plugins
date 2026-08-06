@@ -5,6 +5,7 @@ from livekit.agents import Plugin
 
 from .log import logger
 from .processor import Processor, ProcessorParameters
+from .vad import VAD, VADParameters
 
 try:
     __version__ = version("ai-coustics-livekit")
@@ -24,5 +25,7 @@ __all__ = [
     "Model",
     "Processor",
     "ProcessorParameters",
+    "VAD",
+    "VADParameters",
     "__version__",
 ]

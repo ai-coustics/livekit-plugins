@@ -3,14 +3,14 @@
 This repository contains ai-coustics-maintained noise cancellation plugins for both LiveKit
 Agents runtimes:
 
-- `python/`: `aic_sdk.Processor` adapted to Python's `rtc.FrameProcessor[rtc.AudioFrame]`
+- `python/`: `aic_sdk.Processor` and `aic_sdk.VadAsync` adapted to LiveKit Agents
 - `node/`: `@ai-coustics/aic-sdk` adapted to Node's `FrameProcessor<AudioFrame>`
 
-Only the SDK `Processor` is integrated for now. LiveKit VAD adapters are intentionally out of
-scope for this first version.
+The Python package includes Processor and VAD integrations. The Node package remains
+Processor-only until its SDK supports the new standalone VAD API.
 
-The plugins use the public ai-coustics SDK directly. Applications load or download an SDK `Model`
-and pass it to `Processor`, retaining control over model provisioning and storage.
+The plugins use the public ai-coustics SDK directly. Applications load or download SDK models and
+pass them to `Processor` or Python `VAD`, retaining control over model provisioning and storage.
 
 ## Python
 
@@ -28,6 +28,10 @@ noise_cancellation = ai_coustics.Processor(
     processor_parameters=ai_coustics.ProcessorParameters(enhancement_level=1.0),
 )
 
+vad_model_path = ai_coustics.Model.download("vad-2.1-xxs-16khz", "./models")
+vad_model = ai_coustics.Model.from_file(vad_model_path)
+vad = ai_coustics.VAD(model=vad_model)
+
 # For a model provisioned during deployment, skip the download:
 # model = ai_coustics.Model.from_file("./models/quail.aicmodel")
 ```
@@ -35,6 +39,9 @@ noise_cancellation = ai_coustics.Processor(
 Pass `noise_cancellation` anywhere LiveKit accepts an
 `rtc.FrameProcessor[rtc.AudioFrame]`, for example as the `noise_cancellation` value in room input
 options. `license_key=` can be passed explicitly instead of using `AIC_SDK_LICENSE`.
+
+Pass `vad` as the `vad=` argument to a LiveKit `AgentSession`. It uses a dedicated VAD model and
+does not depend on the noise-cancellation Processor.
 
 The Python distribution is named `ai-coustics-livekit`, but its import follows LiveKit's plugin
 namespace: `livekit.plugins.ai_coustics`. It replaces the official
