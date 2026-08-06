@@ -7,15 +7,6 @@ declare module "@ai-coustics/aic-sdk" {
     getOptimalNumFrames(sampleRate: number): number;
   }
 
-  export class OtelConfig {
-    enable: boolean;
-    sessionId: string | null;
-    exportIntervalMs: number;
-    static enabled(): OtelConfig;
-    static disabled(): OtelConfig;
-    static withSessionId(sessionId: string): OtelConfig;
-  }
-
   export const ProcessorParameter: {
     readonly Bypass: number;
     readonly EnhancementLevel: number;
@@ -32,7 +23,7 @@ declare module "@ai-coustics/aic-sdk" {
   }
 
   export class Processor {
-    constructor(model: Model, licenseKey: string, otelConfig?: OtelConfig | null);
+    constructor(model: Model, licenseKey: string);
     initialize(
       sampleRate: number,
       numChannels: number,
@@ -43,4 +34,3 @@ declare module "@ai-coustics/aic-sdk" {
     getProcessorContext(): ProcessorContext;
   }
 }
-

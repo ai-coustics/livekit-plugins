@@ -1,6 +1,5 @@
 export {
   Model,
-  OtelConfig,
   ProcessorParameter,
   type ProcessorContext,
 } from "./sdk.js";

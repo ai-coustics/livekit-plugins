@@ -54,14 +54,12 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
         model: aic_sdk.Model,
         license_key: str | None = None,
         processor_parameters: ProcessorParameters | None = None,
-        otel_config: aic_sdk.OtelConfig | None = None,
     ) -> None:
         resolved_license_key = _license_key(license_key)
         try:
             processor = aic_sdk.Processor(
                 model,
                 resolved_license_key,
-                otel_config=otel_config,
             )
         except Exception as error:
             raise RuntimeError(f"Failed to create ai-coustics Processor: {error}") from error

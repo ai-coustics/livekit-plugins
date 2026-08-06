@@ -33,11 +33,9 @@ class FakeProcessor:
         self,
         model: object,
         license_key: str,
-        otel_config: object | None = None,
     ) -> None:
         self.model = model
         self.license_key = license_key
-        self.otel_config = otel_config
         self.context = FakeContext()
         self.inits: list[tuple[int, int, int]] = []
         self.blocks: list[np.ndarray] = []

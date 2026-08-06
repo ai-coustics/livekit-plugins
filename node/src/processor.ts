@@ -2,7 +2,6 @@ import { AudioFrame, FrameProcessor } from "@livekit/rtc-node";
 
 import {
   type Model,
-  type OtelConfig,
   Processor as AicProcessor,
   type ProcessorContext,
   ProcessorParameter as AicProcessorParameter,
@@ -20,7 +19,6 @@ export interface ProcessorOptions {
   model: Model;
   licenseKey?: string;
   processorParameters?: ProcessorParameters;
-  otelConfig?: OtelConfig;
 }
 
 function resolveLicenseKey(value?: string): string {
@@ -58,11 +56,7 @@ export class Processor extends FrameProcessor<AudioFrame> {
     super();
     const licenseKey = resolveLicenseKey(options.licenseKey);
     try {
-      this.processor = new AicProcessor(
-        options.model,
-        licenseKey,
-        options.otelConfig,
-      );
+      this.processor = new AicProcessor(options.model, licenseKey);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       throw new Error(`Failed to create ai-coustics Processor: ${detail}`, {

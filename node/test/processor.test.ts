@@ -81,7 +81,6 @@ const sdk = vi.hoisted(() => {
 
 vi.mock("@ai-coustics/aic-sdk", () => ({
   Model: sdk.FakeModel,
-  OtelConfig: class {},
   Processor: sdk.FakeProcessor,
   ProcessorParameter: { Bypass: 0, EnhancementLevel: 1 },
 }));
