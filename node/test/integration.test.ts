@@ -63,7 +63,7 @@ describeIf("native Processor integration", () => {
       processorParameters: { bypass: true },
     });
     const output = enhancer.process(frame(0, 2));
-    enhancer.updateProcessorParameters({ bypass: false });
+    enhancer.setParameters({ bypass: false });
 
     expect(output.channels).toBe(2);
     expect(output.samplesPerChannel).toBe(samplesPerFrame);

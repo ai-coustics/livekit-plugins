@@ -75,7 +75,7 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
         self._last_slow_warning = 0.0
 
         if processor_parameters is not None:
-            self.update_processor_parameters(processor_parameters)
+            self.set_parameters(processor_parameters)
 
     @property
     def enabled(self) -> bool:
@@ -103,25 +103,22 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
             raise RuntimeError("The ai-coustics processor is closed")
         return self._context.get_output_delay()
 
-    def set_parameter(self, parameter: aic_sdk.ProcessorParameter, value: float) -> None:
-        """Set a raw SDK Processor parameter."""
-
-        if self._context is not None:
-            self._context.set_parameter(parameter, value)
-
-    def update_processor_parameters(self, parameters: ProcessorParameters) -> None:
+    def set_parameters(self, parameters: ProcessorParameters) -> None:
         """Apply a partial Processor-parameter update."""
+
+        if self._context is None:
+            return
 
         if parameters.enhancement_level is not None:
             level = parameters.enhancement_level
             if not 0.0 <= level <= 1.0:
                 raise ValueError(f"enhancement_level must be in [0.0, 1.0], got {level}")
-            self.set_parameter(aic_sdk.ProcessorParameter.EnhancementLevel, level)
+            self._context.set_parameter(aic_sdk.ProcessorParameter.EnhancementLevel, level)
 
         if parameters.bypass is not None:
             if not isinstance(parameters.bypass, bool):
                 raise TypeError("bypass must be a bool")
-            self.set_parameter(
+            self._context.set_parameter(
                 aic_sdk.ProcessorParameter.Bypass,
                 1.0 if parameters.bypass else 0.0,
             )

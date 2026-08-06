@@ -171,14 +171,14 @@ describe("Processor", () => {
     });
     const processor = sdk.instances[0]!;
     enhancer.process(new AudioFrame(new Int16Array(800), 16000, 1, 800));
-    enhancer.updateProcessorParameters({ enhancementLevel: 0.9 });
+    enhancer.setParameters({ enhancementLevel: 0.9 });
     enhancer.process(new AudioFrame(new Int16Array(160), 16000, 1, 160));
 
     expect(processor.context.parameters.filter(([key]) => key === 0)).toHaveLength(1);
     expect(processor.context.parameters.filter(([key]) => key === 1)).toEqual([
       [1, 0.9],
     ]);
-    expect(() => enhancer.updateProcessorParameters({ enhancementLevel: 1.1 })).toThrow(
+    expect(() => enhancer.setParameters({ enhancementLevel: 1.1 })).toThrow(
       "enhancementLevel",
     );
   });

@@ -5,7 +5,6 @@ import {
   type OtelConfig,
   Processor as AicProcessor,
   type ProcessorContext,
-  type ProcessorParameter,
   ProcessorParameter as AicProcessorParameter,
 } from "./sdk.js";
 
@@ -72,7 +71,7 @@ export class Processor extends FrameProcessor<AudioFrame> {
     }
     this.context = this.processor.getProcessorContext();
     if (options.processorParameters) {
-      this.updateProcessorParameters(options.processorParameters);
+      this.setParameters(options.processorParameters);
     }
   }
 
@@ -101,23 +100,23 @@ export class Processor extends FrameProcessor<AudioFrame> {
     return this.context.getOutputDelay();
   }
 
-  setParameter(parameter: ProcessorParameter, value: number): void {
-    this.context?.setParameter(parameter, value);
-  }
-
-  updateProcessorParameters(parameters: ProcessorParameters): void {
+  setParameters(parameters: ProcessorParameters): void {
+    if (!this.context) return;
     if (parameters.enhancementLevel !== undefined) {
       const level = parameters.enhancementLevel;
       if (level < 0 || level > 1) {
         throw new Error(`enhancementLevel must be in [0.0, 1.0], got ${level}`);
       }
-      this.setParameter(AicProcessorParameter.EnhancementLevel, level);
+      this.context.setParameter(AicProcessorParameter.EnhancementLevel, level);
     }
     if (parameters.bypass !== undefined) {
       if (typeof parameters.bypass !== "boolean") {
         throw new TypeError("bypass must be a boolean");
       }
-      this.setParameter(AicProcessorParameter.Bypass, parameters.bypass ? 1 : 0);
+      this.context.setParameter(
+        AicProcessorParameter.Bypass,
+        parameters.bypass ? 1 : 0,
+      );
     }
   }
 

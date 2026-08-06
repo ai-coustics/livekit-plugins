@@ -156,7 +156,7 @@ def test_reinitializes_when_any_frame_geometry_changes() -> None:
 def test_parameter_updates_validate_and_are_not_reapplied() -> None:
     enhancer = create_enhancer(processor_parameters=ProcessorParameters(bypass=True))
     enhancer._process(make_frame())
-    enhancer.update_processor_parameters(ProcessorParameters(enhancement_level=0.9))
+    enhancer.set_parameters(ProcessorParameters(enhancement_level=0.9))
     enhancer._process(make_frame(frames=160))
     processor = FakeProcessor.instances[0]
 
@@ -165,7 +165,7 @@ def test_parameter_updates_validate_and_are_not_reapplied() -> None:
         processor.context.parameters.count((aic_sdk.ProcessorParameter.EnhancementLevel, 0.9)) == 1
     )
     with pytest.raises(ValueError, match="enhancement_level"):
-        enhancer.update_processor_parameters(ProcessorParameters(enhancement_level=1.1))
+        enhancer.set_parameters(ProcessorParameters(enhancement_level=1.1))
 
 
 def test_disabled_processor_is_passthrough_and_reenable_resets() -> None:
