@@ -1,0 +1,134 @@
+# Development
+
+This repository contains separate Python and Node.js packages backed by the corresponding public
+ai-coustics SDK. Develop and test each package from its own directory.
+
+## Architecture
+
+`Processor` accepts an already-loaded SDK `Model`, never a model ID or file path. Both packages
+expose the SDK's `Model.from_file` / `Model.fromFile` and `Model.download` APIs so applications can
+choose when and where models are downloaded and loaded.
+
+Model loading and native Processor construction happen when the filter is constructed. A
+synchronous SDK construction error is raised with its original error attached. Backend
+authentication continues asynchronously during the SDK's grace period, so the plugin does not
+process a throwaway frame to probe the license.
+
+Processor format initialization is lazy because LiveKit supplies the complete stream geometry
+with the first frame. Each LiveKit frame is processed in one fixed-size SDK call. This uses the
+SDK's frame adapter, preserves the frame shape and metadata, and avoids the additional latency of
+the SDK's variable-frame mode.
+
+Processing errors are logged and the original LiveKit frame is returned. This fail-open behavior
+keeps room audio flowing if the SDK rejects a frame or encounters a runtime error.
+
+## Setup
+
+Python development uses `uv`:
+
+```bash
+cd python
+uv sync --dev
+```
+
+Node.js development uses npm:
+
+```bash
+cd node
+npm ci
+```
+
+Set `AIC_SDK_LICENSE` before running tests that construct the real SDK Processor:
+
+```bash
+export AIC_SDK_LICENSE=...
+```
+
+The integration and end-to-end tests download
+`quail-vf-2.2-s-16khz` by default. Override its ID or cache directory with
+`AIC_INTEGRATION_MODEL_ID` and `AIC_INTEGRATION_MODEL_DIR`.
+
+## Tests and checks
+
+The test suite has three layers:
+
+1. Unit tests mock the native SDK boundary and require no license or network access.
+2. Integration tests use a downloaded model and the real SDK Processor directly.
+3. End-to-end tests send microphone audio through a real LiveKit room and a model-free
+   `AgentSession`.
+
+Run the Python suite and checks with:
+
+```bash
+cd python
+uv run pytest tests/test_processor.py -q
+uv run pytest tests/test_integration.py -q
+uv run pytest tests/test_e2e_room.py -q
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy
+```
+
+Run the Node.js suite and checks with:
+
+```bash
+cd node
+npm test
+npm run test:integration
+npm run test:e2e
+npm run check
+npm run build
+```
+
+The integration and end-to-end commands require `AIC_SDK_LICENSE`. The end-to-end commands also
+require a LiveKit server.
+
+## Local end-to-end environment
+
+The end-to-end tests connect two RTC participants to a unique room:
+
+```text
+synthetic microphone publisher
+  -> LiveKit server
+  -> agent RoomIO
+  -> rtc.AudioStream
+  -> ai-coustics Processor
+  -> AgentSession
+```
+
+They verify that RoomIO invokes the real SDK-backed Processor, processing remains successful after
+the SDK authentication grace period, frame geometry is preserved, and RoomIO closes the Processor
+during session teardown.
+
+Start LiveKit in a separate terminal. A native server is the simplest option on macOS; Linux can
+use either the native server or the container:
+
+```bash
+livekit-server --dev
+
+# Linux container alternative. Keep the version aligned with CI.
+docker run --rm --network host livekit/livekit-server:v1.13.1 --dev
+```
+
+LiveKit dev mode uses the following values, which are also the test defaults:
+
+```text
+LIVEKIT_URL=ws://127.0.0.1:7880
+LIVEKIT_API_KEY=devkey
+LIVEKIT_API_SECRET=secret
+```
+
+Set `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` to target a different test server.
+Do not run the end-to-end tests against a production LiveKit project.
+
+## Continuous integration
+
+Unit tests run across the supported Python and Node.js version matrices. The protected integration
+jobs run one representative version of each runtime, require the repository's `AIC_SDK_LICENSE`
+secret, cache downloaded models, and execute both the native integration and room end-to-end
+tests.
+
+CI starts the pinned upstream LiveKit server image with host networking and dev credentials. The
+server is readiness-checked before the tests, its logs are printed even after a failure, and the
+container is always removed. Integration jobs do not run for pull requests from forks so the SDK
+license is not exposed.
