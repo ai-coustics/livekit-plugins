@@ -102,6 +102,58 @@ Processor-only and VAD-only configurations have the intended SDK topology; using
 standard RoomIO path is functional, but the VAD operates on Processor output and its event timing
 cannot compensate for the Processor's independent audio delay.
 
+### Streaming Analyzer integration
+
+The aic-sdk streaming analysis API is split into a `Collector` and an `Analyzer`. The collector
+accepts mono float32 audio synchronously and is safe to feed from the audio path, while
+`analyze_buffered()` / `analyzeBuffered()` runs an expensive model inference and must execute away
+from that path. The result contains risk, speaker reverb, speaker loudness, interfering speech,
+media speech, noise, and packet-loss scores. `FileAnalyzer` is intended for complete in-memory
+signals and is not appropriate for a live agent stream.
+
+An Analyzer is a side-channel consumer rather than an audio transform. Implementing it as a
+pass-through `FrameProcessor` would let it collect early audio, but it would occupy RoomIO's single
+`noise_cancellation` slot and could not run beside the enhancement `Processor`. An `AudioInput`
+wrapper can coexist with enhancement today, but only observes the already-processed AgentSession
+input and has awkward setup and ownership when RoomIO creates the default input. Either approach
+is useful for a prototype, but neither is a suitable public integration.
+
+The preferred upstream solution is a generic audio observer or tap interface in LiveKit Agents.
+RoomIO or AgentSession should fan frames out to registered observers without allowing observer
+backpressure or failures to affect the main audio pipeline. Its lifecycle should cover stream
+metadata, audio-format initialization, hard-boundary reset or flush, track replacement and detach,
+and asynchronous close. Placement should be explicit:
+
+- A `raw` tap before noise cancellation and automatic gain control measures the caller's original
+  environment and can share the unmodified signal with the VAD.
+- A `processed` tap observes exactly what downstream STT, VAD, turn detection, or speech-to-speech
+  models receive and is the appropriate default for predicting downstream failure.
+
+Supporting a truly raw tap may also require an RTC `AudioStream` hook or a branching processing
+graph because the current RTC frame processor runs before Agents receives the frame. This work can
+therefore share the upstream solution proposed for Processor/VAD raw-audio fan-out.
+
+The plugin-side API should create one SDK collector/analyzer pair per LiveKit observer stream and
+expose immutable analysis events. Events should include the seven scores, model and stream
+metadata, result time and accumulated audio position, inference duration, and a sequence number.
+Collection requires only PCM16-to-float32 conversion and mono downmixing; the SDK handles sample
+rate adaptation after the collector is initialized with the input rate. Analysis should be
+scheduled from accumulated audio duration, allow only one inference at a time, and replace stale
+pending work instead of building an unbounded queue. Track and format discontinuities must reset
+the SDK state, and close must terminate the analyzer telemetry session.
+
+Analysis results should use a dedicated `audio_analysis` event instead of being forced into
+LiveKit's deprecated `metrics_collected` event. Inference duration, errors, and backlog remain
+operational diagnostics and may later map to first-class analyzer metrics. If future analysis
+models use different context windows, aic-sdk should expose the model's analysis-window duration
+so the plugin does not have to hard-code the current five-second window.
+
+Python can run `analyze_buffered()` through `asyncio.to_thread()` because the binding releases the
+GIL during inference. Node aic-sdk 0.22 exposes only synchronous `analyzeBuffered()` and
+`terminateSession()`, so calling them from a timer would still block the agent's JavaScript event
+loop. A production Node integration first needs native asynchronous APIs such as
+`analyzeBufferedAsync()` and `terminateSessionAsync()` that execute on a worker pool.
+
 ### First-class Processor metrics
 
 The plugins currently expose Processor health through structured LiveKit logs. This covers events
