@@ -4,16 +4,17 @@ This package adapts `aic_sdk.Processor` to LiveKit's
 `rtc.FrameProcessor[rtc.AudioFrame]` interface and `aic_sdk.VadAsync` to LiveKit Agents' streaming
 VAD interface.
 
-> **Replacement notice:** `ai-coustics-livekit` replaces, and is not compatible with, LiveKit's
-> official `livekit-plugins-ai-coustics` package. Do not install both. Both distributions provide
-> the `livekit.plugins.ai_coustics` import path, so coexistence can select the wrong implementation
-> or combine incompatible APIs. Uninstall the official package before installing this one.
+> **Replacement notice:** `ai-coustics-livekit-plugin` replaces, and is not compatible with,
+> LiveKit's official `livekit-plugins-ai-coustics` package. Do not install both. Both distributions
+> provide the `livekit.plugins.ai_coustics` import path, so coexistence can select the wrong
+> implementation or combine incompatible APIs. Uninstall the official package before installing
+> this one.
 
 ## Installation and model provisioning
 
 ```bash
 pip uninstall livekit-plugins-ai-coustics
-pip install ai-coustics-livekit
+pip install ai-coustics-livekit-plugin
 export AIC_SDK_LICENSE=...
 ```
 
@@ -134,6 +135,7 @@ original channel count afterward, preserving LiveKit frame geometry.
 This package is not compatible with `python -m livekit.agents download-files`. Provision models
 explicitly and load them with `Model.from_file` at runtime.
 
-The distribution is named `ai-coustics-livekit`, while its import uses LiveKit's plugin namespace.
-Migration from the official plugin requires replacing its model-enum and `audio_enhancement()`
-usage with an explicitly loaded SDK `Model` and the `Processor` constructor shown above.
+The distribution is named `ai-coustics-livekit-plugin`, while its import uses LiveKit's plugin
+namespace. Migration from the official plugin requires replacing its model-enum and
+`audio_enhancement()` usage with an explicitly loaded SDK `Model` and the `Processor` constructor
+shown above.
