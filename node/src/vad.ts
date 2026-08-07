@@ -452,6 +452,10 @@ class AicVADStream extends LiveKitVADStream {
         continue;
       }
 
+      if (inputSampleRate !== 0 && value.sampleRate !== inputSampleRate) {
+        resetState();
+      }
+
       if (inputSampleRate === 0) {
         inputSampleRate = value.sampleRate;
         inferenceBlockSize = this.model.getOptimalBlockSize(inputSampleRate);
@@ -480,9 +484,6 @@ class AicVADStream extends LiveKitVADStream {
               1000,
           ) + predictionDelaySamples;
         speechBuffer = new Int16Array(maxSamples);
-      } else if (value.sampleRate !== inputSampleRate) {
-        this.logger.error("a frame with a different sample rate was already pushed");
-        continue;
       }
 
       appendInferenceAudio(toMono(value));

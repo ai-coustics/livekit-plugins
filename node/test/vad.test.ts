@@ -363,6 +363,33 @@ describe("VAD", () => {
     expect(native.context.resetCount).toBe(1);
   });
 
+  it("re-initializes when the input sample rate changes mid-stream", async () => {
+    const vad = new VAD({
+      model: new sdk.FakeModel(),
+      licenseKey: "test-license",
+    });
+    const stream = vad.stream();
+    const native = sdk.instances[0]!;
+    native.predictions.push([0.1, false], [0.2, false]);
+
+    stream.pushFrame(makeFrame(new Int16Array(160), 16_000));
+    stream.pushFrame(makeFrame(new Int16Array(480), 48_000));
+    const events = await collectEvents(stream);
+    const inferenceEvents = events.filter(
+      (event) => event.type === VADEventType.INFERENCE_DONE,
+    );
+
+    expect(native.initializations).toEqual([
+      [16_000, 160, false],
+      [48_000, 480, false],
+    ]);
+    expect(native.context.resetCount).toBe(1);
+    expect(native.blocks).toHaveLength(2);
+    expect(inferenceEvents.map((event) => event.probability)).toEqual([0.1, 0.2]);
+    expect(inferenceEvents.map((event) => event.samplesIndex)).toEqual([160, 480]);
+    expect(native.terminateCalls).toBe(1);
+  });
+
   it("updates active and future streams", async () => {
     const vad = new VAD({
       model: new sdk.FakeModel(),
