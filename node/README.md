@@ -24,5 +24,9 @@ the SDK to fetch an artifact first. Synchronous SDK construction errors fail imm
 backend authentication uses the SDK's grace period. Pass `noiseCancellation` wherever LiveKit
 accepts a `FrameProcessor<AudioFrame>`.
 
+The SDK 0.22 Processor accepts mono audio. Multichannel LiveKit frames are downmixed before
+processing, then the enhanced mono signal is duplicated across the original channel count so the
+output retains the input frame geometry.
+
 This release integrates noise cancellation through the SDK Processor. A LiveKit VAD adapter will
 be added separately.

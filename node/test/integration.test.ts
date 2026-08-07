@@ -54,6 +54,7 @@ describeIf("native Processor integration", () => {
     ).flat();
     const outputTail = outputs.slice(20).flatMap((output) => Array.from(output.data));
     expect(outputTail).not.toEqual(inputTail);
+    enhancer.close();
   }, 120_000);
 
   it("supports stereo and runtime bypass updates", () => {
@@ -66,5 +67,9 @@ describeIf("native Processor integration", () => {
 
     expect(output.channels).toBe(2);
     expect(output.samplesPerChannel).toBe(samplesPerFrame);
+    for (let sample = 0; sample < output.samplesPerChannel; sample += 1) {
+      expect(output.data[sample * 2]).toBe(output.data[sample * 2 + 1]);
+    }
+    enhancer.close();
   }, 120_000);
 });

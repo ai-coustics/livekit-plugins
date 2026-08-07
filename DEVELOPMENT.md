@@ -16,9 +16,10 @@ process a throwaway frame to probe the license.
 
 Processor format initialization is lazy because LiveKit supplies the complete stream geometry
 with the first frame. Each LiveKit frame is processed in one fixed-size SDK call, avoiding the
-additional latency of the SDK's variable-block-size mode. aic-sdk 3 processes mono audio only, so
-multichannel LiveKit frames are downmixed before processing and the enhanced signal is duplicated
-across the original channel count. This preserves the LiveKit frame geometry and metadata.
+additional latency of the SDK's variable-block-size mode. aic-sdk 3 for Python and 0.22 for Node
+process mono audio only, so multichannel LiveKit frames are downmixed before processing and the
+enhanced signal is duplicated across the original channel count. This preserves the LiveKit frame
+geometry and metadata.
 
 Processing errors are logged and the original LiveKit frame is returned. This fail-open behavior
 keeps room audio flowing if the SDK rejects a frame or encounters a runtime error.
@@ -30,8 +31,8 @@ and buffered state on `flush()`, and terminate their SDK telemetry session when 
 durations and speech lookback account for the SDK's prediction delay so decisions remain aligned
 with the input audio timeline. A rolling frame deque retains only the required lookback, while a
 bounded contiguous PCM buffer makes each speech transition event expose its candidate audio as a
-single immutable `AudioFrame`. VAD support is intentionally Python-only until
-`@ai-coustics/aic-sdk` 0.22 exposes the standalone VAD API.
+single immutable `AudioFrame`. VAD support is currently Python-only; the Node SDK exposes the
+standalone VAD API as of 0.22, and its LiveKit adapter will be added separately.
 
 The wrapper overrides the model-specific SDK duration defaults with LiveKit-compatible values:
 50 ms minimum speech and a 250 ms speech hold. The latter satisfies the minimum silence required

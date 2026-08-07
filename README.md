@@ -6,8 +6,9 @@ Agents runtimes:
 - `python/`: `aic_sdk.Processor` and `aic_sdk.VadAsync` adapted to LiveKit Agents
 - `node/`: `@ai-coustics/aic-sdk` adapted to Node's `FrameProcessor<AudioFrame>`
 
-The Python package includes Processor and VAD integrations. The Node package remains
-Processor-only until its SDK supports the new standalone VAD API.
+The Python package includes Processor and VAD integrations. The Node package currently includes
+the Processor integration; its SDK now exposes the standalone VAD API, and the LiveKit adapter
+will be added separately.
 
 The plugins use the public ai-coustics SDK directly. Applications load or download SDK models and
 pass them to `Processor` or Python `VAD`, retaining control over model provisioning and storage.

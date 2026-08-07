@@ -5,6 +5,7 @@ import {
   Processor as AicProcessor,
   type ProcessorContext,
   ProcessorParameter as AicProcessorParameter,
+  setSdkId,
 } from "./sdk.js";
 
 const SLOW_WARNING_INTERVAL_MS = 10_000;
@@ -54,6 +55,11 @@ export class Processor extends FrameProcessor<AudioFrame> {
   constructor(options: ProcessorOptions) {
     super();
     const licenseKey = resolveLicenseKey(options.licenseKey);
+
+    // The SDK keeps the first integration identifier it receives. Set this before Processor
+    // construction so usage is attributed to the LiveKit Node plugin.
+    setSdkId(9);
+
     try {
       this.processor = new AicProcessor(options.model, licenseKey);
     } catch (error) {
@@ -62,7 +68,7 @@ export class Processor extends FrameProcessor<AudioFrame> {
         cause: error,
       });
     }
-    this.context = this.processor.getProcessorContext();
+    this.context = this.processor.getContext();
     if (options.processorParameters) {
       this.setParameters(options.processorParameters);
     }
@@ -117,11 +123,11 @@ export class Processor extends FrameProcessor<AudioFrame> {
         this.streamFormat[1] !== streamFormat[1] ||
         this.streamFormat[2] !== streamFormat[2]
       ) {
-        this.processor.initialize(...streamFormat, false);
+        this.processor.initialize(streamFormat[0], streamFormat[2], false);
         this.streamFormat = streamFormat;
         console.info(
           `ai-coustics initialized: ${streamFormat[0]} Hz, ${streamFormat[1]} ch, ` +
-            `${streamFormat[2]} samples/frame, output delay ${this.context.getOutputDelay()} samples`,
+            `${streamFormat[2]} samples/frame, audio delay ${this.context.getAudioDelay()} samples`,
         );
       }
       const expectedSamples = frame.samplesPerChannel * frame.channels;
@@ -132,8 +138,32 @@ export class Processor extends FrameProcessor<AudioFrame> {
       }
 
       const samples = pcm16ToFloat32(frame.data);
-      this.processor.processInterleaved(samples);
-      const data = float32ToPcm16(samples);
+      const mono = new Float32Array(frame.samplesPerChannel);
+      if (frame.channels === 1) {
+        mono.set(samples);
+      } else {
+        for (let sample = 0; sample < frame.samplesPerChannel; sample += 1) {
+          let sum = 0;
+          for (let channel = 0; channel < frame.channels; channel += 1) {
+            sum += samples[sample * frame.channels + channel]!;
+          }
+          mono[sample] = sum / frame.channels;
+        }
+      }
+
+      this.processor.process(mono);
+      const processedMono = float32ToPcm16(mono);
+      let data: Int16Array;
+      if (frame.channels === 1) {
+        data = processedMono;
+      } else {
+        data = new Int16Array(expectedSamples);
+        for (let sample = 0; sample < frame.samplesPerChannel; sample += 1) {
+          for (let channel = 0; channel < frame.channels; channel += 1) {
+            data[sample * frame.channels + channel] = processedMono[sample]!;
+          }
+        }
+      }
       this.lastErrorMessage = null;
 
       const elapsedMs = performance.now() - started;
@@ -170,6 +200,17 @@ export class Processor extends FrameProcessor<AudioFrame> {
 
   close(): void {
     this.filteringEnabled = false;
+    const processor = this.processor;
+
+    if (processor) {
+      try {
+        processor.terminateSession();
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        console.error(`Failed to terminate ai-coustics Processor session: ${detail}`);
+      }
+    }
+
     this.context = null;
     this.processor = null;
     this.streamFormat = null;

@@ -2,13 +2,14 @@ import {
   Model as NativeModel,
   Processor as NativeProcessor,
   ProcessorParameter as NativeProcessorParameter,
+  _setSdkId as nativeSetSdkId,
 } from "@ai-coustics/aic-sdk";
 
-/** Public structural types for aic-sdk 0.21, which does not ship TypeScript declarations. */
+/** Public structural types for aic-sdk 0.22, which does not ship TypeScript declarations. */
 export interface Model {
   getId(): string;
   getOptimalSampleRate(): number;
-  getOptimalNumFrames(sampleRate: number): number;
+  getOptimalBlockSize(sampleRate: number): number;
 }
 
 interface ModelConstructor {
@@ -27,19 +28,19 @@ export interface ProcessorContext {
   reset(): void;
   setParameter(parameter: ProcessorParameter, value: number): void;
   getParameter(parameter: ProcessorParameter): number;
-  getOutputDelay(): number;
+  getAudioDelay(): number;
   updateBearerToken(token: string): void;
 }
 
 interface ProcessorInstance {
   initialize(
     sampleRate: number,
-    numChannels: number,
-    numFrames: number,
-    allowVariableFrames?: boolean,
+    blockSize: number,
+    variableBlockSize?: boolean,
   ): void;
-  processInterleaved(buffer: Float32Array): void;
-  getProcessorContext(): ProcessorContext;
+  process(buffer: Float32Array): void;
+  getContext(): ProcessorContext;
+  terminateSession(): void;
 }
 
 interface ProcessorConstructor {
@@ -48,3 +49,4 @@ interface ProcessorConstructor {
 
 export const Model: ModelConstructor = NativeModel;
 export const Processor: ProcessorConstructor = NativeProcessor;
+export const setSdkId: (id: number) => void = nativeSetSdkId;

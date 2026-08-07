@@ -38,7 +38,7 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "@ai-coustics/aic-sdk": "^0.21.0"
+    "@ai-coustics/aic-sdk": "^0.22.0"
   },
   "peerDependencies": {
     "@livekit/agents": ">=1.0.43 <2",

@@ -4,7 +4,7 @@ declare module "@ai-coustics/aic-sdk" {
     static download(modelId: string, downloadDir: string): string;
     getId(): string;
     getOptimalSampleRate(): number;
-    getOptimalNumFrames(sampleRate: number): number;
+    getOptimalBlockSize(sampleRate: number): number;
   }
 
   export const ProcessorParameter: {
@@ -18,7 +18,7 @@ declare module "@ai-coustics/aic-sdk" {
     reset(): void;
     setParameter(parameter: ProcessorParameter, value: number): void;
     getParameter(parameter: ProcessorParameter): number;
-    getOutputDelay(): number;
+    getAudioDelay(): number;
     updateBearerToken(token: string): void;
   }
 
@@ -26,11 +26,14 @@ declare module "@ai-coustics/aic-sdk" {
     constructor(model: Model, licenseKey: string);
     initialize(
       sampleRate: number,
-      numChannels: number,
-      numFrames: number,
-      allowVariableFrames?: boolean,
+      blockSize: number,
+      variableBlockSize?: boolean,
     ): void;
-    processInterleaved(buffer: Float32Array): void;
-    getProcessorContext(): ProcessorContext;
+    process(buffer: Float32Array): void;
+    getContext(): ProcessorContext;
+    terminateSession(): void;
   }
+
+  /** Internal integration hook exported by the SDK for official wrappers. */
+  export function _setSdkId(id: number): void;
 }
