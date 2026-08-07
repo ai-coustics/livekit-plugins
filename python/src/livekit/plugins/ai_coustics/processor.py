@@ -73,7 +73,6 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
             raise RuntimeError(f"Failed to create ai-coustics Processor: {error}") from error
 
         self._processor: aic_sdk.Processor | None = processor
-        self._context: aic_sdk.ProcessorContext | None = self._processor.get_context()
         self._model_id = model_id
         self._format: tuple[int, int, int] | None = None
         self._stream_info: dict[str, str] = {}
@@ -104,8 +103,13 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
         self._last_reported_error_signature: tuple[str, str, str] | None = None
         self._last_error_report: float | None = None
 
-        if processor_parameters is not None:
-            self.set_parameters(processor_parameters)
+        try:
+            self._context: aic_sdk.ProcessorContext | None = processor.get_context()
+            if processor_parameters is not None:
+                self.set_parameters(processor_parameters)
+        except Exception:
+            processor.terminate_session()
+            raise
 
     @property
     def enabled(self) -> bool:

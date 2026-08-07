@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 import weakref
 from collections import deque
@@ -17,6 +18,23 @@ _SLOW_WARNING_INTERVAL = 10.0
 _SLOW_INFERENCE_BACKLOG_THRESHOLD = 0.2
 _DEFAULT_SPEECH_HOLD_DURATION = 0.25
 _DEFAULT_MINIMUM_SPEECH_DURATION = 0.05
+
+
+def _terminate_native_vad(native_vad: aic_sdk.VadAsync) -> None:
+    # VadAsync exposes only an async terminate, so drive it to completion when no loop is running
+    # (the common synchronous construction path) and schedule it otherwise.
+    async def terminate() -> None:
+        try:
+            await native_vad.terminate_session_async()
+        except Exception as error:
+            logger.error("Failed to terminate ai-coustics VAD session: %s", error)
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(terminate())
+    else:
+        loop.create_task(terminate())
 
 
 @dataclass
@@ -73,11 +91,17 @@ class VAD(agents.vad.VAD):
         initial_vad, initial_context = self._create_native_vad()
         self._initial_vad: aic_sdk.VadAsync | None = initial_vad
         self._initial_context: aic_sdk.VadContext | None = initial_context
-        self._default_speech_hold_duration = initial_context.get_parameter(
-            aic_sdk.VadParameter.SpeechHoldDuration
-        )
-        if vad_parameters is not None:
-            self.set_parameters(vad_parameters)
+        try:
+            self._default_speech_hold_duration = initial_context.get_parameter(
+                aic_sdk.VadParameter.SpeechHoldDuration
+            )
+            if vad_parameters is not None:
+                self.set_parameters(vad_parameters)
+        except Exception:
+            _terminate_native_vad(initial_vad)
+            self._initial_vad = None
+            self._initial_context = None
+            raise
 
     @property
     def model(self) -> str:
@@ -143,6 +167,18 @@ class VAD(agents.vad.VAD):
                 )
             self._parameters.minimum_speech_duration = parameters.minimum_speech_duration
 
+    async def aclose(self) -> None:
+        native_vad = self._initial_vad
+        self._initial_vad = None
+        self._initial_context = None
+        if native_vad is None:
+            return
+
+        try:
+            await native_vad.terminate_session_async()
+        except Exception as error:
+            logger.error("Failed to terminate ai-coustics VAD session: %s", error)
+
     def _create_native_vad(self) -> tuple[aic_sdk.VadAsync, aic_sdk.VadContext]:
         # The SDK retains its first integration ID. Set this before construction so usage is
         # attributed to the LiveKit Python plugin instead of the generic Python binding.
@@ -156,19 +192,25 @@ class VAD(agents.vad.VAD):
         except Exception as error:
             raise RuntimeError(f"Failed to create ai-coustics VAD: {error}") from error
 
-        context = native_vad.get_context()
-        if self._parameters.sensitivity is not None:
-            context.set_parameter(aic_sdk.VadParameter.Sensitivity, self._parameters.sensitivity)
-        if self._parameters.speech_hold_duration is not None:
-            context.set_parameter(
-                aic_sdk.VadParameter.SpeechHoldDuration,
-                self._parameters.speech_hold_duration,
-            )
-        if self._parameters.minimum_speech_duration is not None:
-            context.set_parameter(
-                aic_sdk.VadParameter.MinimumSpeechDuration,
-                self._parameters.minimum_speech_duration,
-            )
+        try:
+            context = native_vad.get_context()
+            if self._parameters.sensitivity is not None:
+                context.set_parameter(
+                    aic_sdk.VadParameter.Sensitivity, self._parameters.sensitivity
+                )
+            if self._parameters.speech_hold_duration is not None:
+                context.set_parameter(
+                    aic_sdk.VadParameter.SpeechHoldDuration,
+                    self._parameters.speech_hold_duration,
+                )
+            if self._parameters.minimum_speech_duration is not None:
+                context.set_parameter(
+                    aic_sdk.VadParameter.MinimumSpeechDuration,
+                    self._parameters.minimum_speech_duration,
+                )
+        except Exception:
+            _terminate_native_vad(native_vad)
+            raise
         return native_vad, context
 
 

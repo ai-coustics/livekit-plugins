@@ -18,6 +18,7 @@ const sdk = vi.hoisted(() => {
   } as const;
 
   class FakeContext {
+    static setParameterError: Error | null = null;
     readonly parameters = new Map<number, number>([
       [VadParameter.SpeechHoldDuration, 0.25],
       [VadParameter.Sensitivity, 0.5],
@@ -43,6 +44,7 @@ const sdk = vi.hoisted(() => {
     }
 
     setParameter(parameter: number, value: number): void {
+      if (FakeContext.setParameterError) throw FakeContext.setParameterError;
       this.parameters.set(parameter, value);
     }
 
@@ -116,6 +118,7 @@ const sdk = vi.hoisted(() => {
   class FakeProcessor {}
 
   return {
+    FakeContext,
     FakeModel,
     FakeProcessor,
     FakeVad,
@@ -158,6 +161,7 @@ describe("VAD", () => {
     sdk.instances.length = 0;
     sdk.nativeCalls.length = 0;
     sdk.FakeVad.constructorError = null;
+    sdk.FakeContext.setParameterError = null;
   });
 
   it("constructs the first native VAD eagerly with LiveKit-compatible defaults", async () => {
@@ -203,6 +207,15 @@ describe("VAD", () => {
     } catch (error) {
       expect((error as Error & { cause?: unknown }).cause).toBe(sdkError);
     }
+  });
+
+  it("terminates the native session when construction setup fails", () => {
+    sdk.FakeContext.setParameterError = new Error("bad parameter");
+
+    expect(
+      () => new VAD({ model: new sdk.FakeModel(), licenseKey: "test-license" }),
+    ).toThrow("bad parameter");
+    expect(sdk.instances[0]!.terminateCalls).toBe(1);
   });
 
   it("emits inference events and contiguous speech audio", async () => {

@@ -95,7 +95,18 @@ export class VAD extends LiveKitVAD {
     this.initialVad = initial.vad;
     this.initialContext = initial.context;
     if (options.vadParameters) {
-      this.setParameters(options.vadParameters);
+      try {
+        this.setParameters(options.vadParameters);
+      } catch (error) {
+        try {
+          this.initialVad.terminateSession();
+        } catch {
+          // best-effort release of the freshly-allocated native session
+        }
+        this.initialVad = null;
+        this.initialContext = null;
+        throw error;
+      }
     }
   }
 
@@ -207,23 +218,32 @@ export class VAD extends LiveKitVAD {
       });
     }
 
-    const context = vad.getContext();
-    if (this.parameters.sensitivity !== undefined) {
-      context.setParameter(AicVadParameter.Sensitivity, this.parameters.sensitivity);
+    try {
+      const context = vad.getContext();
+      if (this.parameters.sensitivity !== undefined) {
+        context.setParameter(AicVadParameter.Sensitivity, this.parameters.sensitivity);
+      }
+      if (this.parameters.speechHoldDuration !== undefined) {
+        context.setParameter(
+          AicVadParameter.SpeechHoldDuration,
+          this.parameters.speechHoldDuration,
+        );
+      }
+      if (this.parameters.minimumSpeechDuration !== undefined) {
+        context.setParameter(
+          AicVadParameter.MinimumSpeechDuration,
+          this.parameters.minimumSpeechDuration,
+        );
+      }
+      return { vad, context };
+    } catch (error) {
+      try {
+        vad.terminateSession();
+      } catch {
+        // best-effort release of the freshly-allocated native session
+      }
+      throw error;
     }
-    if (this.parameters.speechHoldDuration !== undefined) {
-      context.setParameter(
-        AicVadParameter.SpeechHoldDuration,
-        this.parameters.speechHoldDuration,
-      );
-    }
-    if (this.parameters.minimumSpeechDuration !== undefined) {
-      context.setParameter(
-        AicVadParameter.MinimumSpeechDuration,
-        this.parameters.minimumSpeechDuration,
-      );
-    }
-    return { vad, context };
   }
 }
 

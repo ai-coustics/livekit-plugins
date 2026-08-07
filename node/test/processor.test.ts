@@ -193,6 +193,18 @@ describe("Processor", () => {
     }
   });
 
+  it("terminates the native session when construction setup fails", () => {
+    expect(
+      () =>
+        new Processor({
+          model: new sdk.FakeModel(),
+          licenseKey: "test-license",
+          processorParameters: { enhancementLevel: 1.1 },
+        }),
+    ).toThrow("enhancementLevel");
+    expect(sdk.instances[0]!.terminateCalls).toBe(1);
+  });
+
   it("reinitializes when any frame geometry changes", () => {
     const enhancer = new Processor({
       model: new sdk.FakeModel(),

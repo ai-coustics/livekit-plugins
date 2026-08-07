@@ -103,9 +103,18 @@ export class Processor extends FrameProcessor<AudioFrame> {
         cause: error,
       });
     }
-    this.context = this.processor.getContext();
-    if (options.processorParameters) {
-      this.setParameters(options.processorParameters);
+    try {
+      this.context = this.processor.getContext();
+      if (options.processorParameters) {
+        this.setParameters(options.processorParameters);
+      }
+    } catch (error) {
+      try {
+        this.processor.terminateSession();
+      } catch {
+        // best-effort release of the freshly-allocated native session
+      }
+      throw error;
     }
   }
 

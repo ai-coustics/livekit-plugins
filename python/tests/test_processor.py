@@ -137,6 +137,13 @@ def test_wraps_processor_construction_errors(monkeypatch: pytest.MonkeyPatch) ->
     assert exc_info.value.__cause__ is sdk_error
 
 
+def test_constructor_setup_failure_terminates_native_session() -> None:
+    with pytest.raises(ValueError, match="enhancement_level"):
+        create_enhancer(processor_parameters=ProcessorParameters(enhancement_level=1.1))
+
+    assert FakeProcessor.instances[0].terminate_calls == 1
+
+
 def test_downmixes_stereo_for_sdk_and_preserves_livekit_frame_geometry() -> None:
     enhancer = create_enhancer(processor_parameters=ProcessorParameters(enhancement_level=0.75))
     pcm = np.array([1000, 3000, 2000, 4000, 3000, 5000], dtype=np.int16)

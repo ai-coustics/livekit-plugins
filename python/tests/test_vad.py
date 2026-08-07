@@ -30,6 +30,8 @@ class FakeModel:
 
 
 class FakeVadContext:
+    set_parameter_error: Exception | None = None
+
     def __init__(self) -> None:
         self.parameters = {
             str(aic_sdk.VadParameter.Sensitivity): 0.5,
@@ -42,6 +44,8 @@ class FakeVadContext:
         self.reset_count = 0
 
     def set_parameter(self, parameter: aic_sdk.VadParameter, value: float) -> None:
+        if FakeVadContext.set_parameter_error is not None:
+            raise FakeVadContext.set_parameter_error
         self.parameters[str(parameter)] = value
 
     def get_parameter(self, parameter: aic_sdk.VadParameter) -> float:
@@ -110,6 +114,7 @@ class FakeVadAsync:
 @pytest.fixture(autouse=True)
 def fake_native_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeVadAsync.instances.clear()
+    FakeVadContext.set_parameter_error = None
     native_calls.clear()
     monkeypatch.setattr(
         "livekit.plugins.ai_coustics.vad.aic_sdk.set_sdk_id",
@@ -199,6 +204,26 @@ def test_wraps_native_vad_construction_errors(monkeypatch: pytest.MonkeyPatch) -
         create_vad()
 
     assert exc_info.value.__cause__ is sdk_error
+
+
+def test_constructor_setup_failure_terminates_native_session() -> None:
+    FakeVadContext.set_parameter_error = ValueError("bad parameter")
+
+    with pytest.raises(ValueError, match="bad parameter"):
+        create_vad()
+
+    assert FakeVadAsync.instances[0].terminate_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_aclose_terminates_initial_session_when_stream_never_created() -> None:
+    vad = create_vad()
+    native = FakeVadAsync.instances[0]
+
+    await vad.aclose()
+    await vad.aclose()
+
+    assert native.terminate_calls == 1
 
 
 @pytest.mark.asyncio
