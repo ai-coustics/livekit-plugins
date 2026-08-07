@@ -69,6 +69,19 @@ Processor-only and VAD-only configurations have the intended SDK topology; using
 standard RoomIO path is functional, but the VAD operates on Processor output and its event timing
 cannot compensate for the Processor's independent audio delay.
 
+### Richer upstream VAD metrics
+
+The plugin reports each native call's elapsed time through `VADEvent.inference_duration`, which
+LiveKit aggregates into `VADMetrics.inference_duration_total` and `inference_count`. The plugin also
+logs structured warnings when cumulative processing time falls behind the incoming audio timeline.
+
+LiveKit's metrics model cannot currently expose the worst inference or processing backlog observed
+inside an aggregation period. A future upstream improvement could add processed audio duration (or
+real-time factor), maximum inference duration, and maximum processing backlog to `VADMetrics`.
+LiveKit's `log_metrics()` and OpenTelemetry exporter could then render and export those fields. The
+processing backlog is runtime scheduling/compute debt and must remain distinct from a model's fixed
+VAD prediction delay.
+
 ## Setup
 
 Python development uses `uv`:

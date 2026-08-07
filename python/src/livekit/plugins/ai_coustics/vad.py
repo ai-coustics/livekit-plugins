@@ -14,6 +14,7 @@ from .log import logger
 from .processor import _license_key, _pcm16_to_float32
 
 _SLOW_WARNING_INTERVAL = 10.0
+_SLOW_INFERENCE_BACKLOG_THRESHOLD = 0.2
 _DEFAULT_SPEECH_HOLD_DURATION = 0.25
 _DEFAULT_MINIMUM_SPEECH_DURATION = 0.05
 
@@ -227,6 +228,8 @@ class VADStream(agents.vad.VADStream):
         speech_pcm = bytearray()
         speech_samples = 0
         speech_buffer_full = False
+        processing_backlog = 0.0
+        slow_warning_active = False
 
         speaking = False
         speech_duration = 0.0
@@ -239,6 +242,7 @@ class VADStream(agents.vad.VADStream):
         def reset_state() -> None:
             nonlocal input_sample_rate, inference_block_size
             nonlocal prefix_samples, speech_samples, speech_buffer_full
+            nonlocal processing_backlog, slow_warning_active
             nonlocal speaking, speech_duration, silence_duration
             nonlocal raw_speech_duration, raw_silence_duration
             nonlocal current_sample, timestamp
@@ -252,6 +256,8 @@ class VADStream(agents.vad.VADStream):
             speech_pcm.clear()
             speech_samples = 0
             speech_buffer_full = False
+            processing_backlog = 0.0
+            slow_warning_active = False
             speaking = False
             speech_duration = 0.0
             silence_duration = 0.0
@@ -376,12 +382,25 @@ class VADStream(agents.vad.VADStream):
                     block = _pcm16_to_float32(memoryview(pcm))
 
                     started = time.perf_counter()
-                    await native_vad.process_async(block)
-                    inference_duration = time.perf_counter() - started
+                    try:
+                        await native_vad.process_async(block)
+                    except Exception as error:
+                        raise RuntimeError(
+                            "ai-coustics VAD inference failed "
+                            f"(model={self._model.get_id()}, "
+                            f"sample_rate={input_sample_rate}, "
+                            f"block_size={inference_block_size}): {error}"
+                        ) from error
+                    inference_completed = time.perf_counter()
+                    inference_duration = inference_completed - started
 
                     probability = context.raw_vad_probability()
                     detected = context.is_speech_detected()
                     block_duration = inference_block_size / input_sample_rate
+                    processing_backlog = max(
+                        0.0,
+                        processing_backlog + inference_duration - block_duration,
+                    )
                     prediction_delay_duration = prediction_delay_samples / input_sample_rate
                     current_sample += inference_block_size
                     timestamp += block_duration
@@ -488,16 +507,30 @@ class VADStream(agents.vad.VADStream):
                         speech_samples = 0
                         speech_buffer_full = False
 
-                    if (
-                        inference_duration > block_duration
-                        and started - self._last_slow_warning > _SLOW_WARNING_INTERVAL
+                    if processing_backlog == 0.0:
+                        slow_warning_active = False
+                    elif processing_backlog >= _SLOW_INFERENCE_BACKLOG_THRESHOLD and (
+                        not slow_warning_active
+                        or inference_completed - self._last_slow_warning >= _SLOW_WARNING_INTERVAL
                     ):
-                        self._last_slow_warning = started
+                        slow_warning_active = True
+                        self._last_slow_warning = inference_completed
                         logger.warning(
-                            "ai-coustics VAD inference is slower than realtime "
-                            "(%.1f ms for a %.1f ms block)",
+                            "ai-coustics VAD inference is falling behind realtime "
+                            "(%.1f ms inference for a %.1f ms block, %.1f ms backlog)",
                             inference_duration * 1000,
                             block_duration * 1000,
+                            processing_backlog * 1000,
+                            extra={
+                                "inference_duration": inference_duration,
+                                "block_duration": block_duration,
+                                "realtime_factor": inference_duration / block_duration,
+                                "processing_backlog": processing_backlog,
+                                "sample_rate": input_sample_rate,
+                                "block_size": inference_block_size,
+                                "model_name": self._model.get_id(),
+                                "model_provider": "ai-coustics",
+                            },
                         )
         finally:
             await self._terminate_session()

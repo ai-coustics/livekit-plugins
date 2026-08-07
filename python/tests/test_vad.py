@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Callable
 from typing import cast
 
 import aic_sdk
@@ -78,6 +79,8 @@ class FakeVadAsync:
         self.blocks: list[np.ndarray] = []
         self.initialized_configs: list[aic_sdk.ProcessorConfig] = []
         self.terminate_calls = 0
+        self.on_process: Callable[[], None] | None = None
+        self.process_error: Exception | None = None
         self.instances.append(self)
         native_calls.append(("vad", None))
 
@@ -90,6 +93,10 @@ class FakeVadAsync:
 
     async def process_async(self, block: np.ndarray) -> None:
         self.blocks.append(block.copy())
+        if self.on_process is not None:
+            self.on_process()
+        if self.process_error is not None:
+            raise self.process_error
         if self.predictions:
             self.context.probability, self.context.detected = self.predictions.popleft()
 
@@ -329,6 +336,69 @@ async def test_caps_contiguous_speech_audio_and_keeps_rolling_prefix_current() -
         14,
         15,
     ]
+
+
+@pytest.mark.asyncio
+async def test_warns_for_sustained_inference_backlog_with_structured_context(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    clock = 100.0
+    durations = deque([0.31, 0.31, 10.1])
+
+    def perf_counter() -> float:
+        return clock
+
+    def advance_clock() -> None:
+        nonlocal clock
+        clock += durations.popleft()
+
+    monkeypatch.setattr("livekit.plugins.ai_coustics.vad.time.perf_counter", perf_counter)
+    vad = create_vad(model=FakeModel(sample_rate=100, block_size=10))
+    stream = vad.stream()
+    native = FakeVadAsync.instances[0]
+    native.on_process = advance_clock
+    native.predictions.extend([(0.0, False)] * 3)
+
+    stream.push_frame(make_frame(np.arange(30, dtype=np.int16), sample_rate=100))
+    with caplog.at_level("WARNING", logger="livekit.plugins.ai_coustics"):
+        await collect_events(stream)
+
+    warnings = [
+        record for record in caplog.records if "falling behind realtime" in record.getMessage()
+    ]
+    assert len(warnings) == 2
+    assert warnings[0].inference_duration == pytest.approx(0.31)
+    assert warnings[0].block_duration == pytest.approx(0.1)
+    assert warnings[0].realtime_factor == pytest.approx(3.1)
+    assert warnings[0].processing_backlog == pytest.approx(0.21)
+    assert warnings[0].sample_rate == 100
+    assert warnings[0].block_size == 10
+    assert warnings[0].model_name == "vad-test-model"
+    assert warnings[0].model_provider == "ai-coustics"
+
+
+@pytest.mark.asyncio
+async def test_inference_error_includes_model_and_audio_format() -> None:
+    vad = create_vad(model=FakeModel(sample_rate=48000, block_size=480))
+    stream = vad.stream()
+    native = FakeVadAsync.instances[0]
+    sdk_error = ValueError("native failure")
+    native.process_error = sdk_error
+
+    stream.push_frame(make_frame(np.arange(480, dtype=np.int16), sample_rate=48000))
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            r"ai-coustics VAD inference failed "
+            r"\(model=vad-test-model, sample_rate=48000, block_size=480\): native failure"
+        ),
+    ) as exc_info:
+        await collect_events(stream)
+
+    assert exc_info.value.__cause__ is sdk_error
+    assert native.terminate_calls == 1
 
 
 @pytest.mark.asyncio
