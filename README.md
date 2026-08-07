@@ -11,6 +11,10 @@ Both packages include Processor and standalone VAD integrations.
 The plugins use the public ai-coustics SDK directly. Applications load or download SDK models and
 pass them to `Processor` or `VAD`, retaining control over model provisioning and storage.
 
+These plugins are not currently compatible with LiveKit Agents' `download-files` commands.
+Download models explicitly during application or container setup with `Model.download`, then load
+the resulting files with `Model.from_file` / `Model.fromFile` at runtime.
+
 ## Python
 
 Install the package from `python/`, set `AIC_SDK_LICENSE`, and construct the processor before

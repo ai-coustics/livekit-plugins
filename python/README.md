@@ -36,6 +36,10 @@ the SDK to fetch an artifact first. Synchronous SDK construction errors fail imm
 backend authentication uses the SDK's grace period. Pass `noise_cancellation` wherever LiveKit
 accepts an `rtc.FrameProcessor[rtc.AudioFrame]`.
 
+This package is not currently compatible with `python -m livekit.agents download-files`. Download
+the required models explicitly during application or container setup and load their files with
+`Model.from_file` at runtime.
+
 Pass `vad` to `AgentSession(vad=vad, ...)`. VAD requires a dedicated VAD model; enhancement models
 cannot be reused for it. Each LiveKit VAD stream owns an independent SDK VAD session. Incoming
 audio is downmixed to mono and reblocked at its original sample rate. The SDK handles any model-rate

@@ -30,6 +30,10 @@ the SDK to fetch an artifact first. Synchronous SDK construction errors fail imm
 backend authentication uses the SDK's grace period. Pass `noiseCancellation` wherever LiveKit
 accepts a `FrameProcessor<AudioFrame>`.
 
+This package is not currently compatible with `npx livekit-agents download-files`. Download the
+required models explicitly during application or container setup and load their files with
+`Model.fromFile` at runtime.
+
 Pass `vad` as the `vad` option to a LiveKit `AgentSession`. Each LiveKit VAD stream owns a native
 SDK VAD session. The adapter downmixes multichannel input and reblocks it at the incoming sample
 rate without resampling; the SDK performs model-rate conversion internally. It emits inference,

@@ -43,6 +43,30 @@ by LiveKit's streaming turn detector. Explicit `VADParameters` values still take
 
 ## Future work
 
+### LiveKit `download-files` integration
+
+The plugins do not currently participate in LiveKit Agents' `download-files` commands. Model
+provisioning must remain an explicit application or container-build step for now.
+
+Python already discovers and imports `livekit.plugins.ai_coustics`, and the package registers a
+LiveKit `Plugin`, but its inherited `download_files()` implementation is intentionally a no-op.
+The standalone command does not load the user's agent configuration or pass arguments to the
+plugin, so it cannot determine which arbitrary enhancement and VAD model IDs the application
+intends to use. Downloading a fixed model enum would conflict with this plugin's model-ID and
+file-path API.
+
+Node has the same model-selection problem plus a discovery limitation. The standalone LiveKit CLI
+only scans `node_modules/@livekit/agents-plugin-*`, so it does not import
+`@ai-coustics/livekit-agents`; registering a `Plugin.downloadFiles()` hook in our package would not
+make the modern command discover it.
+
+A future implementation needs both an explicit, build-time source of model IDs and a stable way
+to resolve the downloaded versioned files without contacting the model manifest again at runtime.
+Node additionally needs an upstream LiveKit discovery mechanism for third-party package scopes,
+such as package metadata or an explicit package list. Until those pieces exist, use
+`Model.download` during provisioning and construct runtime models from the returned files with
+`Model.from_file` / `Model.fromFile`.
+
 ### Raw-audio fan-out for combined Processor and VAD use
 
 The ai-coustics SDK recommends feeding the Processor and VAD the same original microphone blocks
