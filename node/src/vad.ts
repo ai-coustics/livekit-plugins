@@ -1,4 +1,9 @@
-import { VAD as LiveKitVAD, VADStream as LiveKitVADStream, VADEventType } from "@livekit/agents";
+import {
+  VAD as LiveKitVAD,
+  VADStream as LiveKitVADStream,
+  VADEventType,
+  log,
+} from "@livekit/agents";
 import { AudioFrame } from "@livekit/rtc-node";
 
 import { pcm16ToFloat32 } from "./processor.js";
@@ -148,31 +153,77 @@ export class VAD extends LiveKitVAD {
       const context = stream.sdkContext;
       if (context) contexts.push(context);
     }
+    if (contexts.length === 0) {
+      const initial = this.createNativeVad();
+      this.initialVad = initial.vad;
+      this.initialContext = initial.context;
+      contexts.push(initial.context);
+    }
 
     if (parameters.sensitivity !== undefined) {
-      for (const context of contexts) {
-        context.setParameter(AicVadParameter.Sensitivity, parameters.sensitivity);
+      if (
+        this.applyParameter(
+          contexts,
+          AicVadParameter.Sensitivity,
+          "sensitivity",
+          parameters.sensitivity,
+        )
+      ) {
+        this.parameters.sensitivity = parameters.sensitivity;
       }
-      this.parameters.sensitivity = parameters.sensitivity;
     }
     if (parameters.speechHoldDuration !== undefined) {
-      for (const context of contexts) {
-        context.setParameter(
+      if (
+        this.applyParameter(
+          contexts,
           AicVadParameter.SpeechHoldDuration,
+          "speechHoldDuration",
           parameters.speechHoldDuration,
-        );
+        )
+      ) {
+        this.parameters.speechHoldDuration = parameters.speechHoldDuration;
       }
-      this.parameters.speechHoldDuration = parameters.speechHoldDuration;
     }
     if (parameters.minimumSpeechDuration !== undefined) {
-      for (const context of contexts) {
-        context.setParameter(
+      if (
+        this.applyParameter(
+          contexts,
           AicVadParameter.MinimumSpeechDuration,
+          "minimumSpeechDuration",
           parameters.minimumSpeechDuration,
-        );
+        )
+      ) {
+        this.parameters.minimumSpeechDuration = parameters.minimumSpeechDuration;
       }
-      this.parameters.minimumSpeechDuration = parameters.minimumSpeechDuration;
     }
+  }
+
+  private applyParameter(
+    contexts: VadContext[],
+    parameter: AicVadParameter,
+    name: string,
+    value: number,
+  ): boolean {
+    try {
+      for (const context of contexts) context.setParameter(parameter, value);
+    } catch (error) {
+      const fields = {
+        modelProvider: "ai-coustics",
+        modelName: this.modelId,
+        parameter: name,
+        parameterValue: value,
+        errorType: error instanceof Error ? error.name : typeof error,
+        errorMessage: errorDetail(error),
+      };
+      const message = "ai-coustics VAD parameter rejected; keeping the current value";
+      try {
+        log().warn(fields, message);
+      } catch {
+        console.warn(message, fields);
+      }
+      return false;
+    }
+    return true;
   }
 
   override async close(): Promise<void> {
@@ -209,17 +260,26 @@ export class VAD extends LiveKitVAD {
 
     const context = vad.getContext();
     if (this.parameters.sensitivity !== undefined) {
-      context.setParameter(AicVadParameter.Sensitivity, this.parameters.sensitivity);
+      this.applyParameter(
+        [context],
+        AicVadParameter.Sensitivity,
+        "sensitivity",
+        this.parameters.sensitivity,
+      );
     }
     if (this.parameters.speechHoldDuration !== undefined) {
-      context.setParameter(
+      this.applyParameter(
+        [context],
         AicVadParameter.SpeechHoldDuration,
+        "speechHoldDuration",
         this.parameters.speechHoldDuration,
       );
     }
     if (this.parameters.minimumSpeechDuration !== undefined) {
-      context.setParameter(
+      this.applyParameter(
+        [context],
         AicVadParameter.MinimumSpeechDuration,
+        "minimumSpeechDuration",
         this.parameters.minimumSpeechDuration,
       );
     }

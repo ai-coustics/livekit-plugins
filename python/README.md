@@ -123,6 +123,9 @@ processor.set_parameters(ai_coustics.ProcessorParameters(enhancement_level=0.8))
 vad.set_parameters(ai_coustics.VADParameters(sensitivity=0.6))
 ```
 
+Parameters are applied independently. If the SDK rejects one, the plugin logs a warning, retains
+that parameter's current value, and continues applying the others.
+
 Processor bypass is delay-compensated. Setting `processor.enabled = False` instead returns
 immediate, undelayed input.
 

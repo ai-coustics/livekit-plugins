@@ -2,6 +2,7 @@ import {
   VAD as LiveKitVAD,
   VADEventType,
   initializeLogger,
+  log,
   type VADStream,
 } from "@livekit/agents";
 import { AudioFrame } from "@livekit/rtc-node";
@@ -18,6 +19,7 @@ const sdk = vi.hoisted(() => {
   } as const;
 
   class FakeContext {
+    static parameterErrors = new Map<number, Error>();
     readonly parameters = new Map<number, number>([
       [VadParameter.SpeechHoldDuration, 0.25],
       [VadParameter.Sensitivity, 0.5],
@@ -43,6 +45,8 @@ const sdk = vi.hoisted(() => {
     }
 
     setParameter(parameter: number, value: number): void {
+      const error = FakeContext.parameterErrors.get(parameter);
+      if (error) throw error;
       this.parameters.set(parameter, value);
     }
 
@@ -116,6 +120,7 @@ const sdk = vi.hoisted(() => {
   class FakeProcessor {}
 
   return {
+    FakeContext,
     FakeModel,
     FakeProcessor,
     FakeVad,
@@ -158,6 +163,7 @@ describe("VAD", () => {
     sdk.instances.length = 0;
     sdk.nativeCalls.length = 0;
     sdk.FakeVad.constructorError = null;
+    sdk.FakeContext.parameterErrors.clear();
   });
 
   it("constructs the first native VAD eagerly with LiveKit-compatible defaults", async () => {
@@ -203,6 +209,33 @@ describe("VAD", () => {
     } catch (error) {
       expect((error as Error & { cause?: unknown }).cause).toBe(sdkError);
     }
+  });
+
+  it("warns and remains usable when a constructor parameter is rejected", () => {
+    sdk.FakeContext.parameterErrors.set(
+      sdk.VadParameter.Sensitivity,
+      new Error("SDK rejected parameter"),
+    );
+    const warning = vi.spyOn(log(), "warn");
+
+    const vad = new VAD({
+      model: new sdk.FakeModel(),
+      licenseKey: "test-license",
+      vadParameters: { sensitivity: 2, minimumSpeechDuration: 0.1 },
+    });
+    const context = sdk.instances[0]!.context;
+
+    expect(context.getParameter(sdk.VadParameter.Sensitivity)).toBe(0.5);
+    expect(context.getParameter(sdk.VadParameter.MinimumSpeechDuration)).toBe(0.1);
+    expect(warning).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parameter: "sensitivity",
+        parameterValue: 2,
+        errorMessage: "SDK rejected parameter",
+      }),
+      "ai-coustics VAD parameter rejected; keeping the current value",
+    );
+    warning.mockRestore();
   });
 
   it("emits inference events and contiguous speech audio", async () => {
@@ -381,6 +414,34 @@ describe("VAD", () => {
     }
     expect(vad.minSilenceDuration).toBe(600);
 
+    await Promise.all([collectEvents(firstStream), collectEvents(secondStream)]);
+  });
+
+  it("keeps a future stream usable when a stored parameter is rejected", async () => {
+    const vad = new VAD({
+      model: new sdk.FakeModel(),
+      licenseKey: "test-license",
+    });
+    const firstStream = vad.stream();
+    vad.setParameters({ sensitivity: 0.8 });
+    sdk.FakeContext.parameterErrors.set(
+      sdk.VadParameter.Sensitivity,
+      new Error("SDK rejected stored parameter"),
+    );
+    const warning = vi.spyOn(log(), "warn");
+
+    const secondStream = vad.stream();
+    const secondContext = sdk.instances[1]!.context;
+
+    expect(secondContext.getParameter(sdk.VadParameter.Sensitivity)).toBe(0.5);
+    expect(warning).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parameter: "sensitivity",
+        errorMessage: "SDK rejected stored parameter",
+      }),
+      "ai-coustics VAD parameter rejected; keeping the current value",
+    );
+    warning.mockRestore();
     await Promise.all([collectEvents(firstStream), collectEvents(secondStream)]);
   });
 

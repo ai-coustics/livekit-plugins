@@ -30,6 +30,8 @@ class FakeModel:
 
 
 class FakeVadContext:
+    parameter_errors: dict[str, Exception] = {}
+
     def __init__(self) -> None:
         self.parameters = {
             str(aic_sdk.VadParameter.Sensitivity): 0.5,
@@ -42,6 +44,8 @@ class FakeVadContext:
         self.reset_count = 0
 
     def set_parameter(self, parameter: aic_sdk.VadParameter, value: float) -> None:
+        if error := self.parameter_errors.get(str(parameter)):
+            raise error
         self.parameters[str(parameter)] = value
 
     def get_parameter(self, parameter: aic_sdk.VadParameter) -> float:
@@ -110,6 +114,7 @@ class FakeVadAsync:
 @pytest.fixture(autouse=True)
 def fake_native_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeVadAsync.instances.clear()
+    FakeVadContext.parameter_errors.clear()
     native_calls.clear()
     monkeypatch.setattr(
         "livekit.plugins.ai_coustics.vad.aic_sdk.set_sdk_id",
@@ -185,6 +190,42 @@ def test_uses_livekit_compatible_duration_defaults() -> None:
     assert context.get_parameter(aic_sdk.VadParameter.SpeechHoldDuration) == 0.25
     assert context.get_parameter(aic_sdk.VadParameter.MinimumSpeechDuration) == 0.05
     assert vad.min_silence_duration == 0.25
+
+
+def test_rejected_parameter_warns_and_does_not_block_other_updates(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    vad = create_vad()
+    context = FakeVadAsync.instances[0].context
+    FakeVadContext.parameter_errors[str(aic_sdk.VadParameter.Sensitivity)] = RuntimeError(
+        "SDK rejected parameter"
+    )
+
+    vad.set_parameters(VADParameters(sensitivity=0.8, speech_hold_duration=0.6))
+
+    assert context.get_parameter(aic_sdk.VadParameter.Sensitivity) == 0.5
+    assert context.get_parameter(aic_sdk.VadParameter.SpeechHoldDuration) == 0.6
+    assert vad.min_silence_duration == 0.6
+    warning = next(
+        record for record in caplog.records if "VAD parameter rejected" in record.message
+    )
+    assert warning.parameter == "sensitivity"  # type: ignore[attr-defined]
+    assert warning.error_message == "SDK rejected parameter"  # type: ignore[attr-defined]
+
+
+def test_rejected_constructor_parameter_keeps_vad_operational(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    FakeVadContext.parameter_errors[str(aic_sdk.VadParameter.Sensitivity)] = ValueError(
+        "sensitivity out of range"
+    )
+
+    create_vad(vad_parameters=VADParameters(sensitivity=2.0, minimum_speech_duration=0.1))
+    context = FakeVadAsync.instances[0].context
+
+    assert context.get_parameter(aic_sdk.VadParameter.Sensitivity) == 0.5
+    assert context.get_parameter(aic_sdk.VadParameter.MinimumSpeechDuration) == 0.1
+    assert any("VAD parameter rejected" in record.message for record in caplog.records)
 
 
 def test_wraps_native_vad_construction_errors(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -505,6 +546,26 @@ async def test_parameter_updates_reach_active_and_future_streams() -> None:
         assert native.context.get_parameter(aic_sdk.VadParameter.SpeechHoldDuration) == 0.6
     assert vad.min_silence_duration == 0.6
 
+    await collect_events(first_stream)
+    await collect_events(second_stream)
+
+
+@pytest.mark.asyncio
+async def test_rejected_parameter_reapply_does_not_block_a_future_stream(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    vad = create_vad()
+    first_stream = vad.stream()
+    vad.set_parameters(VADParameters(sensitivity=0.8))
+    FakeVadContext.parameter_errors[str(aic_sdk.VadParameter.Sensitivity)] = RuntimeError(
+        "SDK rejected stored parameter"
+    )
+
+    second_stream = vad.stream()
+    second_context = FakeVadAsync.instances[1].context
+
+    assert second_context.get_parameter(aic_sdk.VadParameter.Sensitivity) == 0.5
+    assert any("VAD parameter rejected" in record.message for record in caplog.records)
     await collect_events(first_stream)
     await collect_events(second_stream)
 

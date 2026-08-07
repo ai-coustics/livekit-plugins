@@ -230,6 +230,9 @@ processor.setParameters({ enhancementLevel: 0.8 });
 vad.setParameters({ sensitivity: 0.6 });
 ```
 
+Parameters are applied independently. If the SDK rejects one, the plugin logs a warning, retains
+that parameter's current value, and continues applying the others.
+
 Processor bypass remains delay-compensated. Disabling a Processor instead returns the original
 audio immediately, without the model delay:
 

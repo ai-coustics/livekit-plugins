@@ -125,34 +125,50 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
         )
 
     def set_parameters(self, parameters: ProcessorParameters) -> None:
-        """Apply a partial Processor-parameter update."""
+        """Apply a partial Processor-parameter update, warning on rejected values."""
 
         if self._context is None:
             return
 
         if parameters.enhancement_level is not None:
             level = parameters.enhancement_level
-            if not 0.0 <= level <= 1.0:
-                raise ValueError(f"enhancement_level must be in [0.0, 1.0], got {level}")
-            self._context.set_parameter(aic_sdk.ProcessorParameter.EnhancementLevel, level)
-            logger.debug(
-                "ai-coustics Processor parameter updated",
-                extra=self._diagnostic_fields(parameter="enhancement_level", parameter_value=level),
-            )
+            try:
+                self._context.set_parameter(aic_sdk.ProcessorParameter.EnhancementLevel, level)
+            except Exception as error:
+                self._warn_parameter_rejected("enhancement_level", level, error)
+            else:
+                logger.debug(
+                    "ai-coustics Processor parameter updated",
+                    extra=self._diagnostic_fields(
+                        parameter="enhancement_level", parameter_value=level
+                    ),
+                )
 
         if parameters.bypass is not None:
-            if not isinstance(parameters.bypass, bool):
-                raise TypeError("bypass must be a bool")
-            self._context.set_parameter(
-                aic_sdk.ProcessorParameter.Bypass,
-                1.0 if parameters.bypass else 0.0,
-            )
-            logger.debug(
-                "ai-coustics Processor parameter updated",
-                extra=self._diagnostic_fields(
-                    parameter="bypass", parameter_value=parameters.bypass
-                ),
-            )
+            bypass = parameters.bypass
+            try:
+                self._context.set_parameter(
+                    aic_sdk.ProcessorParameter.Bypass,
+                    1.0 if bypass else 0.0,
+                )
+            except Exception as error:
+                self._warn_parameter_rejected("bypass", bypass, error)
+            else:
+                logger.debug(
+                    "ai-coustics Processor parameter updated",
+                    extra=self._diagnostic_fields(parameter="bypass", parameter_value=bypass),
+                )
+
+    def _warn_parameter_rejected(self, name: str, value: object, error: Exception) -> None:
+        logger.warning(
+            "ai-coustics Processor parameter rejected; keeping the current value",
+            extra=self._diagnostic_fields(
+                parameter=name,
+                parameter_value=value,
+                error_type=type(error).__name__,
+                error_message=str(error),
+            ),
+        )
 
     def _on_stream_info_updated(
         self,

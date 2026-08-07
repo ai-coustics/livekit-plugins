@@ -129,28 +129,55 @@ export class Processor extends FrameProcessor<AudioFrame> {
     if (!this.context) return;
     if (parameters.enhancementLevel !== undefined) {
       const level = parameters.enhancementLevel;
-      if (level < 0 || level > 1) {
-        throw new Error(`enhancementLevel must be in [0.0, 1.0], got ${level}`);
+      let applied = false;
+      try {
+        this.context.setParameter(AicProcessorParameter.EnhancementLevel, level);
+        applied = true;
+      } catch (error) {
+        this.warnParameterRejected("enhancementLevel", level, error);
       }
-      this.context.setParameter(AicProcessorParameter.EnhancementLevel, level);
-      this.writeLog("debug", "ai-coustics Processor parameter updated", {
-        parameter: "enhancementLevel",
-        parameterValue: level,
-      });
+      if (applied) {
+        this.writeLog("debug", "ai-coustics Processor parameter updated", {
+          parameter: "enhancementLevel",
+          parameterValue: level,
+        });
+      }
     }
     if (parameters.bypass !== undefined) {
-      if (typeof parameters.bypass !== "boolean") {
-        throw new TypeError("bypass must be a boolean");
+      const bypass = parameters.bypass;
+      let applied = false;
+      try {
+        this.context.setParameter(AicProcessorParameter.Bypass, bypass ? 1 : 0);
+        applied = true;
+      } catch (error) {
+        this.warnParameterRejected("bypass", bypass, error);
       }
-      this.context.setParameter(
-        AicProcessorParameter.Bypass,
-        parameters.bypass ? 1 : 0,
-      );
-      this.writeLog("debug", "ai-coustics Processor parameter updated", {
-        parameter: "bypass",
-        parameterValue: parameters.bypass,
-      });
+      if (applied) {
+        this.writeLog("debug", "ai-coustics Processor parameter updated", {
+          parameter: "bypass",
+          parameterValue: bypass,
+        });
+      }
     }
+  }
+
+  private warnParameterRejected(
+    parameter: string,
+    parameterValue: unknown,
+    error: unknown,
+  ): void {
+    this.writeLog(
+      "warn",
+      "ai-coustics Processor parameter rejected; keeping the current value",
+      {
+        parameter,
+        parameterValue,
+        errorType: error instanceof Error ? error.name : typeof error,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      },
+      false,
+      error,
+    );
   }
 
   override onStreamInfoUpdated(info: FrameProcessorStreamInfo): void {

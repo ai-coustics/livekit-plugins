@@ -116,32 +116,68 @@ class VAD(agents.vad.VAD):
         return stream
 
     def set_parameters(self, parameters: VADParameters) -> None:
-        """Apply a partial SDK VAD-parameter update to current and future streams."""
+        """Apply a partial VAD-parameter update, warning on rejected values."""
 
         contexts = [stream._context for stream in self._streams if stream._context is not None]
         if self._initial_context is not None:
             contexts.append(self._initial_context)
+        if not contexts:
+            native_vad, context = self._create_native_vad()
+            self._initial_vad = native_vad
+            self._initial_context = context
+            contexts.append(context)
 
         if parameters.sensitivity is not None:
-            for context in contexts:
-                context.set_parameter(aic_sdk.VadParameter.Sensitivity, parameters.sensitivity)
-            self._parameters.sensitivity = parameters.sensitivity
+            if self._apply_parameter(
+                contexts,
+                aic_sdk.VadParameter.Sensitivity,
+                "sensitivity",
+                parameters.sensitivity,
+            ):
+                self._parameters.sensitivity = parameters.sensitivity
 
         if parameters.speech_hold_duration is not None:
-            for context in contexts:
-                context.set_parameter(
-                    aic_sdk.VadParameter.SpeechHoldDuration,
-                    parameters.speech_hold_duration,
-                )
-            self._parameters.speech_hold_duration = parameters.speech_hold_duration
+            if self._apply_parameter(
+                contexts,
+                aic_sdk.VadParameter.SpeechHoldDuration,
+                "speech_hold_duration",
+                parameters.speech_hold_duration,
+            ):
+                self._parameters.speech_hold_duration = parameters.speech_hold_duration
 
         if parameters.minimum_speech_duration is not None:
+            if self._apply_parameter(
+                contexts,
+                aic_sdk.VadParameter.MinimumSpeechDuration,
+                "minimum_speech_duration",
+                parameters.minimum_speech_duration,
+            ):
+                self._parameters.minimum_speech_duration = parameters.minimum_speech_duration
+
+    def _apply_parameter(
+        self,
+        contexts: list[aic_sdk.VadContext],
+        parameter: aic_sdk.VadParameter,
+        name: str,
+        value: float,
+    ) -> bool:
+        try:
             for context in contexts:
-                context.set_parameter(
-                    aic_sdk.VadParameter.MinimumSpeechDuration,
-                    parameters.minimum_speech_duration,
-                )
-            self._parameters.minimum_speech_duration = parameters.minimum_speech_duration
+                context.set_parameter(parameter, value)
+        except Exception as error:
+            logger.warning(
+                "ai-coustics VAD parameter rejected; keeping the current value",
+                extra={
+                    "model_name": self._model_id,
+                    "model_provider": "ai-coustics",
+                    "parameter": name,
+                    "parameter_value": value,
+                    "error_type": type(error).__name__,
+                    "error_message": str(error),
+                },
+            )
+            return False
+        return True
 
     def _create_native_vad(self) -> tuple[aic_sdk.VadAsync, aic_sdk.VadContext]:
         # The SDK retains its first integration ID. Set this before construction so usage is
@@ -158,15 +194,24 @@ class VAD(agents.vad.VAD):
 
         context = native_vad.get_context()
         if self._parameters.sensitivity is not None:
-            context.set_parameter(aic_sdk.VadParameter.Sensitivity, self._parameters.sensitivity)
+            self._apply_parameter(
+                [context],
+                aic_sdk.VadParameter.Sensitivity,
+                "sensitivity",
+                self._parameters.sensitivity,
+            )
         if self._parameters.speech_hold_duration is not None:
-            context.set_parameter(
+            self._apply_parameter(
+                [context],
                 aic_sdk.VadParameter.SpeechHoldDuration,
+                "speech_hold_duration",
                 self._parameters.speech_hold_duration,
             )
         if self._parameters.minimum_speech_duration is not None:
-            context.set_parameter(
+            self._apply_parameter(
+                [context],
                 aic_sdk.VadParameter.MinimumSpeechDuration,
+                "minimum_speech_duration",
                 self._parameters.minimum_speech_duration,
             )
         return native_vad, context

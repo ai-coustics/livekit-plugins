@@ -23,9 +23,12 @@ class FakeModel:
 @dataclass
 class FakeContext:
     parameters: list[tuple[object, float]] = field(default_factory=list)
+    parameter_errors: dict[str, Exception] = field(default_factory=dict)
     reset_count: int = 0
 
     def set_parameter(self, parameter: object, value: float) -> None:
+        if error := self.parameter_errors.get(str(parameter)):
+            raise error
         self.parameters.append((parameter, value))
 
     def get_audio_delay(self) -> int:
@@ -173,7 +176,9 @@ def test_reinitializes_when_any_frame_geometry_changes() -> None:
     ]
 
 
-def test_parameter_updates_validate_and_are_not_reapplied() -> None:
+def test_parameter_updates_warn_on_rejection_and_are_not_reapplied(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     enhancer = create_enhancer(processor_parameters=ProcessorParameters(bypass=True))
     enhancer._process(make_frame())
     enhancer.set_parameters(ProcessorParameters(enhancement_level=0.9))
@@ -184,8 +189,48 @@ def test_parameter_updates_validate_and_are_not_reapplied() -> None:
     assert (
         processor.context.parameters.count((aic_sdk.ProcessorParameter.EnhancementLevel, 0.9)) == 1
     )
-    with pytest.raises(ValueError, match="enhancement_level"):
-        enhancer.set_parameters(ProcessorParameters(enhancement_level=1.1))
+    processor.context.parameter_errors[str(aic_sdk.ProcessorParameter.EnhancementLevel)] = (
+        ValueError("enhancement level out of range")
+    )
+    enhancer.set_parameters(ProcessorParameters(enhancement_level=1.1, bypass=False))
+
+    assert (aic_sdk.ProcessorParameter.EnhancementLevel, 1.1) not in processor.context.parameters
+    assert (aic_sdk.ProcessorParameter.Bypass, 0.0) in processor.context.parameters
+    warning = next(
+        record for record in caplog.records if "Processor parameter rejected" in record.message
+    )
+    assert warning.parameter == "enhancement_level"  # type: ignore[attr-defined]
+    assert warning.parameter_value == 1.1  # type: ignore[attr-defined]
+
+
+def test_sdk_parameter_failure_warns_and_does_not_block_other_updates(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    enhancer = create_enhancer()
+    context = FakeProcessor.instances[0].context
+    context.parameter_errors[str(aic_sdk.ProcessorParameter.EnhancementLevel)] = RuntimeError(
+        "SDK rejected parameter"
+    )
+
+    enhancer.set_parameters(ProcessorParameters(enhancement_level=0.8, bypass=True))
+
+    assert (aic_sdk.ProcessorParameter.EnhancementLevel, 0.8) not in context.parameters
+    assert (aic_sdk.ProcessorParameter.Bypass, 1.0) in context.parameters
+    warning = next(
+        record for record in caplog.records if "Processor parameter rejected" in record.message
+    )
+    assert warning.error_message == "SDK rejected parameter"  # type: ignore[attr-defined]
+
+
+def test_parameter_validation_is_delegated_to_the_sdk() -> None:
+    enhancer = create_enhancer()
+
+    enhancer.set_parameters(ProcessorParameters(enhancement_level=1.1))
+
+    assert (
+        aic_sdk.ProcessorParameter.EnhancementLevel,
+        1.1,
+    ) in FakeProcessor.instances[0].context.parameters
 
 
 def test_disabled_processor_is_passthrough_and_reenable_resets_immediately() -> None:
