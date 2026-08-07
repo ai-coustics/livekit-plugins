@@ -26,8 +26,10 @@ keeps room audio flowing if the SDK rejects a frame or encounters a runtime erro
 The Python `VAD` creates one `aic_sdk.VadAsync` per LiveKit `VADStream`. Streams downmix input and
 reblock it at its original sample rate; the SDK performs any model-rate conversion internally.
 They emit LiveKit inference and speech transition events from SDK predictions, reset all native
-and buffered state on `flush()`, and terminate their SDK telemetry session when closed. VAD support
-is intentionally Python-only until `@ai-coustics/aic-sdk` 0.22 exposes the standalone VAD API.
+and buffered state on `flush()`, and terminate their SDK telemetry session when closed. Event
+durations and speech lookback account for the SDK's prediction delay so decisions remain aligned
+with the input audio timeline. VAD support is intentionally Python-only until
+`@ai-coustics/aic-sdk` 0.22 exposes the standalone VAD API.
 
 ## Setup
 

@@ -209,6 +209,7 @@ class VADStream(agents.vad.VADStream):
 
         input_sample_rate = 0
         inference_block_size = 0
+        prediction_delay_samples = 0
         configured_format: tuple[int, int] | None = None
         inference_buffer = bytearray()
 
@@ -275,7 +276,18 @@ class VADStream(agents.vad.VADStream):
 
             prefix_frames.append(frame)
             prefix_samples += frame.samples_per_channel
-            target_samples = int(self._prefix_padding_duration * frame.sample_rate)
+            minimum_speech_duration = context.get_parameter(
+                aic_sdk.VadParameter.MinimumSpeechDuration
+            )
+            activation_samples = max(
+                frame.samples_per_channel,
+                int(minimum_speech_duration * frame.sample_rate),
+            )
+            target_samples = (
+                int(self._prefix_padding_duration * frame.sample_rate)
+                + prediction_delay_samples
+                + activation_samples
+            )
             while len(prefix_frames) > 1 and (
                 prefix_samples - prefix_frames[0].samples_per_channel >= target_samples
             ):
@@ -284,8 +296,9 @@ class VADStream(agents.vad.VADStream):
         def append_speech_frame(frame: rtc.AudioFrame) -> None:
             nonlocal speech_samples, speech_buffer_full
 
-            max_samples = int(
-                (self._prefix_padding_duration + self._max_buffered_speech) * frame.sample_rate
+            max_samples = (
+                int((self._prefix_padding_duration + self._max_buffered_speech) * frame.sample_rate)
+                + prediction_delay_samples
             )
             if speech_samples + frame.samples_per_channel <= max_samples:
                 speech_frames.append(frame)
@@ -318,6 +331,9 @@ class VADStream(agents.vad.VADStream):
                             )
                         )
                         configured_format = stream_format
+                        # SDK predictions describe earlier input. The delay is reported in samples
+                        # of the configured (LiveKit input) rate, not the model's internal rate.
+                        prediction_delay_samples = context.get_prediction_delay()
                 elif input_frame.sample_rate != input_sample_rate:
                     logger.error("a frame with another sample rate was already pushed")
                     continue
@@ -338,6 +354,7 @@ class VADStream(agents.vad.VADStream):
                     probability = context.raw_vad_probability()
                     detected = context.is_speech_detected()
                     block_duration = inference_block_size / input_sample_rate
+                    prediction_delay_duration = prediction_delay_samples / input_sample_rate
                     current_sample += inference_block_size
                     timestamp += block_duration
 
@@ -348,6 +365,20 @@ class VADStream(agents.vad.VADStream):
                     else:
                         raw_silence_duration += block_duration
                         raw_speech_duration = 0.0
+
+                    # LiveKit derives wall-clock speech boundaries from these durations. Include
+                    # the SDK prediction lag so those boundaries point at the corresponding input
+                    # audio rather than the later time at which the decision became available.
+                    aligned_raw_speech_duration = (
+                        raw_speech_duration + prediction_delay_duration
+                        if raw_speech_duration > 0.0
+                        else 0.0
+                    )
+                    aligned_raw_silence_duration = (
+                        raw_silence_duration + prediction_delay_duration
+                        if raw_silence_duration > 0.0
+                        else 0.0
+                    )
 
                     if speaking:
                         speech_duration += block_duration
@@ -378,15 +409,15 @@ class VADStream(agents.vad.VADStream):
                             probability=probability,
                             inference_duration=inference_duration,
                             speaking=speaking,
-                            raw_accumulated_silence=raw_silence_duration,
-                            raw_accumulated_speech=raw_speech_duration,
+                            raw_accumulated_silence=aligned_raw_silence_duration,
+                            raw_accumulated_speech=aligned_raw_speech_duration,
                         )
                     )
 
                     if detected and not speaking:
                         speaking = True
                         silence_duration = 0.0
-                        speech_duration = max(block_duration, raw_speech_duration)
+                        speech_duration = max(block_duration, aligned_raw_speech_duration)
                         speech_frames[:] = prefix_frames
                         speech_samples = sum(frame.samples_per_channel for frame in speech_frames)
                         self._event_ch.send_nowait(
@@ -400,13 +431,13 @@ class VADStream(agents.vad.VADStream):
                                 probability=probability,
                                 inference_duration=inference_duration,
                                 speaking=True,
-                                raw_accumulated_speech=raw_speech_duration,
+                                raw_accumulated_speech=aligned_raw_speech_duration,
                             )
                         )
                     elif not detected and speaking:
                         speaking = False
-                        silence_duration = raw_silence_duration
-                        completed_speech_duration = max(0.0, speech_duration - raw_silence_duration)
+                        silence_duration = aligned_raw_silence_duration
+                        completed_speech_duration = max(0.0, speech_duration - silence_duration)
                         self._event_ch.send_nowait(
                             agents.vad.VADEvent(
                                 type=agents.vad.VADEventType.END_OF_SPEECH,
@@ -418,7 +449,7 @@ class VADStream(agents.vad.VADStream):
                                 probability=probability,
                                 inference_duration=inference_duration,
                                 speaking=False,
-                                raw_accumulated_silence=raw_silence_duration,
+                                raw_accumulated_silence=aligned_raw_silence_duration,
                             )
                         )
                         speech_duration = 0.0
