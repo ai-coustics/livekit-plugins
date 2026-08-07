@@ -4,58 +4,138 @@ This package adapts `aic_sdk.Processor` to LiveKit's
 `rtc.FrameProcessor[rtc.AudioFrame]` interface and `aic_sdk.VadAsync` to LiveKit Agents' streaming
 VAD interface.
 
+> **Replacement notice:** `ai-coustics-livekit` replaces, and is not compatible with, LiveKit's
+> official `livekit-plugins-ai-coustics` package. Do not install both. Both distributions provide
+> the `livekit.plugins.ai_coustics` import path, so coexistence can select the wrong implementation
+> or combine incompatible APIs. Uninstall the official package before installing this one.
+
+## Installation and model provisioning
+
+```bash
+pip uninstall livekit-plugins-ai-coustics
+pip install ai-coustics-livekit
+export AIC_SDK_LICENSE=...
+```
+
+Download models during application or container setup, not once per agent job:
+
 ```python
 from livekit.plugins import ai_coustics
 
-model_path = ai_coustics.Model.download("quail-vf-2.2-l-16khz", "./models")
-model = ai_coustics.Model.from_file(model_path)
-
-noise_cancellation = ai_coustics.Processor(
-    model=model,
-    processor_parameters=ai_coustics.ProcessorParameters(enhancement_level=1.0),
-)
-
-vad_model_path = ai_coustics.Model.download("vad-2.1-xxs-16khz", "./models")
-vad_model = ai_coustics.Model.from_file(vad_model_path)
-vad = ai_coustics.VAD(
-    model=vad_model,
-    vad_parameters=ai_coustics.VADParameters(
-        sensitivity=0.5,
-        speech_hold_duration=0.25,
-        minimum_speech_duration=0.05,
-    ),
-)
-
-# For a model provisioned during deployment, skip the download:
-# model = ai_coustics.Model.from_file("./models/quail.aicmodel")
+print(ai_coustics.Model.download("quail-vf-2.2-l-16khz", "./models"))
+print(ai_coustics.Model.download("vad-2.1-xxs-16khz", "./models"))
 ```
 
-Set `AIC_SDK_LICENSE` or pass `license_key=` explicitly. `Processor` requires an SDK `Model` loaded
-separately with `Model.from_file`; `Model.download` returns a file path when an application wants
-the SDK to fetch an artifact first. Synchronous SDK construction errors fail immediately, while
-backend authentication uses the SDK's grace period. Pass `noise_cancellation` wherever LiveKit
-accepts an `rtc.FrameProcessor[rtc.AudioFrame]`.
+The first model is for enhancement and the second is for VAD. They are different model types and
+cannot be substituted for one another. Save the returned paths as `AIC_ENHANCEMENT_MODEL_PATH` and
+`AIC_VAD_MODEL_PATH`, or otherwise make the files available to the worker.
 
-This package is not currently compatible with `python -m livekit.agents download-files`. Download
-the required models explicitly during application or container setup and load their files with
-`Model.from_file` at runtime.
+## Agent integration
 
-Pass `vad` to `AgentSession(vad=vad, ...)`. VAD requires a dedicated VAD model; enhancement models
-cannot be reused for it. Each LiveKit VAD stream owns an independent SDK VAD session. Incoming
-audio is downmixed to mono and reblocked at its original sample rate. The SDK handles any model-rate
-conversion internally, while event audio remains at the LiveKit input rate. Processing runs
-asynchronously outside the agent event loop.
+Load model weights once per worker process and create stateful Processor and VAD instances for each
+job. The Processor belongs in RoomIO's `noise_cancellation` option; the VAD belongs directly on
+`AgentSession`:
 
-The wrapper defaults to 50 ms of minimum speech and a 250 ms speech hold, matching LiveKit's VAD
-expectations and streaming turn-detector requirement. Override either value with `VADParameters`
-when a different endpointing profile is needed.
+```python
+import os
 
-The underlying aic-sdk 3 Processor accepts mono audio. Multichannel LiveKit frames are downmixed
-to mono for processing, then the enhanced signal is duplicated across the original channel count.
+from livekit.agents import (
+    Agent,
+    AgentServer,
+    AgentSession,
+    JobContext,
+    cli,
+    inference,
+    room_io,
+)
+from livekit.plugins import ai_coustics
+
+
+enhancement_model = ai_coustics.Model.from_file(
+    os.environ["AIC_ENHANCEMENT_MODEL_PATH"]
+)
+vad_model = ai_coustics.Model.from_file(os.environ["AIC_VAD_MODEL_PATH"])
+
+server = AgentServer()
+
+
+@server.rtc_session()
+async def entrypoint(ctx: JobContext) -> None:
+    processor = ai_coustics.Processor(
+        model=enhancement_model,
+        processor_parameters=ai_coustics.ProcessorParameters(enhancement_level=1.0),
+    )
+    vad = ai_coustics.VAD(model=vad_model)
+
+    session = AgentSession(
+        vad=vad,
+        stt=inference.STT("deepgram/nova-3", language="multi"),
+        llm=inference.LLM("openai/gpt-4.1-mini"),
+        tts=inference.TTS("cartesia/sonic-3"),
+    )
+
+    await session.start(
+        agent=Agent(instructions="You are a helpful voice assistant. Keep replies concise."),
+        room=ctx.room,
+        room_options=room_io.RoomOptions(
+            audio_input=room_io.AudioInputOptions(
+                noise_cancellation=processor,
+            ),
+        ),
+    )
+
+
+if __name__ == "__main__":
+    cli.run_app(server)
+```
+
+The inference STT, LLM, and TTS instances are illustrative; keep the providers already used by
+your agent. The ai-coustics-specific integration points are `AgentSession(vad=vad)` and
+`AudioInputOptions(noise_cancellation=processor)`.
+
+Set `AIC_SDK_LICENSE` or pass `license_key=` explicitly. SDK objects are constructed immediately,
+while backend authentication continues during the SDK grace period. RoomIO owns a directly
+configured Processor and closes it with its input stream. Do not share one Processor instance
+between concurrent rooms.
+
+## Audio flow
+
+To use enhancement only, configure the Processor and retain or omit your existing VAD. To use only
+the ai-coustics VAD, pass it to `AgentSession` and omit the Processor from the room input options.
+
+With both components configured as above, current LiveKit RoomIO sends enhanced audio to the VAD:
+
+```text
+microphone -> Processor -> AgentSession -> STT and VAD
+```
+
+This works, but ai-coustics recommends feeding Processor and VAD the same original microphone
+audio in parallel so the Processor's independent delay does not affect VAD decisions. Standard
+RoomIO cannot currently express that fan-out. Use only one of the two ai-coustics integrations when
+the preferred topology is required, or provide custom audio routing. The repository's
+`DEVELOPMENT.md` describes the required upstream LiveKit work.
+
+## Parameters and audio handling
+
+Runtime updates are partial:
+
+```python
+processor.set_parameters(ai_coustics.ProcessorParameters(enhancement_level=0.8))
+vad.set_parameters(ai_coustics.VADParameters(sensitivity=0.6))
+```
+
+Processor bypass is delay-compensated. Setting `processor.enabled = False` instead returns
+immediate, undelayed input.
+
+The VAD defaults to 50 ms minimum speech and a 250 ms speech hold, matching LiveKit's expectations.
+Incoming audio is downmixed to mono and reblocked at its original sample rate. The SDK handles any
+model-rate conversion internally, and VAD inference runs asynchronously outside the agent event
+loop. Multichannel Processor input is downmixed before processing and duplicated across the
+original channel count afterward, preserving LiveKit frame geometry.
+
+This package is not compatible with `python -m livekit.agents download-files`. Provision models
+explicitly and load them with `Model.from_file` at runtime.
 
 The distribution is named `ai-coustics-livekit`, while its import uses LiveKit's plugin namespace.
-It replaces `livekit-plugins-ai-coustics`; installing both packages in one environment is not
-supported because they provide the same `livekit.plugins.ai_coustics` import path.
-
-The Node.js package also provides Processor and standalone VAD integrations with the corresponding
-camelCase API.
+Migration from the official plugin requires replacing its model-enum and `audio_enhancement()`
+usage with an explicitly loaded SDK `Model` and the `Processor` constructor shown above.

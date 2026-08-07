@@ -2,50 +2,134 @@
 
 This package adapts `@ai-coustics/aic-sdk`'s `Processor` and standalone `Vad` to LiveKit Agents.
 
-```ts
-import { Model, Processor, VAD } from "@ai-coustics/livekit-agents";
+> **Replacement notice:** `@ai-coustics/livekit-agents` replaces, and is not compatible with,
+> LiveKit's official `@livekit/plugins-ai-coustics` package. It is not an extension for the
+> official implementation. Although the packages have distinct import paths, do not install,
+> configure, or mix their classes together. Uninstall the official package and migrate to the
+> constructors shown below.
 
-const modelPath = Model.download("quail-vf-2.2-l-16khz", "./models");
-const model = Model.fromFile(modelPath);
+## Installation and model provisioning
 
-const noiseCancellation = new Processor({
-  model,
-  processorParameters: { enhancementLevel: 1.0 },
-});
-
-const vadModelPath = Model.download("vad-2.1-xxs-16khz", "./models");
-const vadModel = Model.fromFile(vadModelPath);
-const vad = new VAD({
-  model: vadModel,
-  vadParameters: { sensitivity: 0.5 },
-});
-
-// For a model provisioned during deployment, skip the download:
-// const model = Model.fromFile("./models/quail.aicmodel");
+```bash
+npm uninstall @livekit/plugins-ai-coustics
+npm install @ai-coustics/livekit-agents
+export AIC_SDK_LICENSE=...
 ```
 
-Set `AIC_SDK_LICENSE` or pass `licenseKey` explicitly. `Processor` requires an SDK `Model` loaded
-separately with `Model.fromFile`; `Model.download` returns a file path when an application wants
-the SDK to fetch an artifact first. Synchronous SDK construction errors fail immediately, while
-backend authentication uses the SDK's grace period. Pass `noiseCancellation` wherever LiveKit
-accepts a `FrameProcessor<AudioFrame>`.
+Download models during application or container setup, not once per agent job:
 
-This package is not currently compatible with `npx livekit-agents download-files`. Download the
-required models explicitly during application or container setup and load their files with
-`Model.fromFile` at runtime.
+```ts
+import { Model } from "@ai-coustics/livekit-agents";
 
-Pass `vad` as the `vad` option to a LiveKit `AgentSession`. Each LiveKit VAD stream owns a native
-SDK VAD session. The adapter downmixes multichannel input and reblocks it at the incoming sample
-rate without resampling; the SDK performs model-rate conversion internally. It emits inference,
-start-of-speech, and end-of-speech events, including one bounded contiguous mono audio frame for
-each speech candidate.
+console.log(Model.download("quail-vf-2.2-l-16khz", "./models"));
+console.log(Model.download("vad-2.1-xxs-16khz", "./models"));
+```
 
-`VADParameters.sensitivity`, `speechHoldDuration`, and `minimumSpeechDuration` use the SDK's
-native units; both durations are seconds. `prefixPaddingDuration`, `maxBufferedSpeech`, LiveKit
-event durations, and `minSilenceDuration` use milliseconds, following the Node LiveKit Agents API.
-The default 50 ms minimum speech and 250 ms speech hold satisfy LiveKit's streaming turn-detector
-expectations. `setParameters()` applies partial updates to active and future streams.
+The first model is for enhancement and the second is for VAD. They are different model types and
+cannot be substituted for one another. Save the returned paths as `AIC_ENHANCEMENT_MODEL_PATH` and
+`AIC_VAD_MODEL_PATH`, or otherwise make the files available to the worker.
 
-The SDK 0.22 Processor accepts mono audio. Multichannel LiveKit frames are downmixed before
-processing, then the enhanced mono signal is duplicated across the original channel count so the
-output retains the input frame geometry.
+## Agent integration
+
+Load model weights once per worker process and create stateful Processor and VAD instances for each
+job. The Processor belongs in RoomIO's `noiseCancellation` option; the VAD belongs directly on
+`AgentSession`:
+
+```ts
+import {
+  type JobContext,
+  ServerOptions,
+  cli,
+  defineAgent,
+  inference,
+  voice,
+} from "@livekit/agents";
+import { fileURLToPath } from "node:url";
+
+import { Model, Processor, VAD } from "@ai-coustics/livekit-agents";
+
+const enhancementModel = Model.fromFile(
+  process.env.AIC_ENHANCEMENT_MODEL_PATH!,
+);
+const vadModel = Model.fromFile(process.env.AIC_VAD_MODEL_PATH!);
+
+export default defineAgent({
+  entry: async (ctx: JobContext) => {
+    const processor = new Processor({
+      model: enhancementModel,
+      processorParameters: { enhancementLevel: 1.0 },
+    });
+    const vad = new VAD({ model: vadModel });
+
+    const session = new voice.AgentSession({
+      vad,
+      stt: new inference.STT({ model: "deepgram/nova-3", language: "multi" }),
+      llm: new inference.LLM({ model: "openai/gpt-4.1-mini" }),
+      tts: new inference.TTS({ model: "cartesia/sonic-3" }),
+    });
+
+    await session.start({
+      agent: new voice.Agent({
+        instructions: "You are a helpful voice assistant. Keep replies concise.",
+      }),
+      room: ctx.room,
+      inputOptions: {
+        noiseCancellation: processor,
+      },
+    });
+  },
+});
+
+cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+```
+
+The inference STT, LLM, and TTS instances are illustrative; keep the providers already used by
+your agent. The ai-coustics-specific integration points are the `vad` session option and the
+`noiseCancellation` input option.
+
+Set `AIC_SDK_LICENSE` or pass `licenseKey` explicitly. SDK objects are constructed immediately,
+while backend authentication continues during the SDK grace period. RoomIO owns a directly
+configured Processor and closes it with its input stream. Do not share one Processor instance
+between concurrent rooms. VAD streams are owned by `AgentSession`.
+
+## Audio flow
+
+To use enhancement only, configure the Processor and retain or omit your existing VAD. To use only
+the ai-coustics VAD, pass it to `AgentSession` and omit the Processor from the room input options.
+
+With both components configured as above, current LiveKit RoomIO sends enhanced audio to the VAD:
+
+```text
+microphone -> Processor -> AgentSession -> STT and VAD
+```
+
+This works, but ai-coustics recommends feeding Processor and VAD the same original microphone
+audio in parallel so the Processor's independent delay does not affect VAD decisions. Standard
+RoomIO cannot currently express that fan-out. Use only one of the two ai-coustics integrations when
+the preferred topology is required, or provide custom audio routing. The repository's
+`DEVELOPMENT.md` describes the required upstream LiveKit work.
+
+## Parameters and audio handling
+
+Runtime updates are partial:
+
+```ts
+processor.setParameters({ enhancementLevel: 0.8 });
+vad.setParameters({ sensitivity: 0.6 });
+```
+
+Processor bypass is delay-compensated. Calling `processor.setEnabled(false)` instead returns
+immediate, undelayed input.
+
+The VAD defaults to 50 ms minimum speech and a 250 ms speech hold, matching LiveKit's expectations.
+Incoming audio is downmixed to mono and reblocked at its original sample rate. The SDK handles any
+model-rate conversion internally. `prefixPaddingDuration`, `maxBufferedSpeech`, LiveKit event
+durations, and `minSilenceDuration` use milliseconds; SDK VAD parameter durations use seconds.
+Multichannel Processor input is downmixed before processing and duplicated across the original
+channel count afterward, preserving LiveKit frame geometry.
+
+This package is not compatible with `npx livekit-agents download-files`. Provision models
+explicitly and load them with `Model.fromFile` at runtime.
+
+Migration from the official plugin requires replacing its model-enum and factory APIs with an
+explicitly loaded SDK `Model` and the `Processor` constructor shown above.
