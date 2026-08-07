@@ -28,7 +28,7 @@ pip install ai-coustics-livekit
 
 # or
 npm uninstall @livekit/plugins-ai-coustics
-npm install @ai-coustics/livekit-agents
+npm install @ai-coustics/livekit-plugin
 ```
 
 Set your ai-coustics SDK license and the usual LiveKit worker credentials:
@@ -52,7 +52,7 @@ print(ai_coustics.Model.download("vad-2.1-xxs-16khz", "./models"))
 ```
 
 ```ts
-import { Model } from "@ai-coustics/livekit-agents";
+import { Model } from "@ai-coustics/livekit-plugin";
 
 console.log(Model.download("quail-vf-2.2-l-16khz", "./models"));
 console.log(Model.download("vad-2.1-xxs-16khz", "./models"));
@@ -84,9 +84,7 @@ from livekit.plugins import ai_coustics
 
 # Loading model weights is relatively expensive, so reuse the immutable models across jobs in
 # this worker process. Each job still gets independent Processor and VAD state below.
-enhancement_model = ai_coustics.Model.from_file(
-    os.environ["AIC_ENHANCEMENT_MODEL_PATH"]
-)
+enhancement_model = ai_coustics.Model.from_file(os.environ["AIC_ENHANCEMENT_MODEL_PATH"])
 vad_model = ai_coustics.Model.from_file(os.environ["AIC_VAD_MODEL_PATH"])
 
 server = AgentServer()
@@ -146,7 +144,7 @@ import {
 } from "@livekit/agents";
 import { fileURLToPath } from "node:url";
 
-import { Model, Processor, VAD } from "@ai-coustics/livekit-agents";
+import { Model, Processor, VAD } from "@ai-coustics/livekit-plugin";
 
 const enhancementModel = Model.fromFile(
   process.env.AIC_ENHANCEMENT_MODEL_PATH!,

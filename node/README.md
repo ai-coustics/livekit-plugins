@@ -2,7 +2,7 @@
 
 This package adapts `@ai-coustics/aic-sdk`'s `Processor` and standalone `Vad` to LiveKit Agents.
 
-> **Replacement notice:** `@ai-coustics/livekit-agents` replaces, and is not compatible with,
+> **Replacement notice:** `@ai-coustics/livekit-plugin` replaces, and is not compatible with,
 > LiveKit's official `@livekit/plugins-ai-coustics` package. It is not an extension for the
 > official implementation. Although the packages have distinct import paths, do not install,
 > configure, or mix their classes together. Uninstall the official package and migrate to the
@@ -12,14 +12,14 @@ This package adapts `@ai-coustics/aic-sdk`'s `Processor` and standalone `Vad` to
 
 ```bash
 npm uninstall @livekit/plugins-ai-coustics
-npm install @ai-coustics/livekit-agents
+npm install @ai-coustics/livekit-plugin
 export AIC_SDK_LICENSE=...
 ```
 
 Download models during application or container setup, not once per agent job:
 
 ```ts
-import { Model } from "@ai-coustics/livekit-agents";
+import { Model } from "@ai-coustics/livekit-plugin";
 
 console.log(Model.download("quail-vf-2.2-l-16khz", "./models"));
 console.log(Model.download("vad-2.1-xxs-16khz", "./models"));
@@ -46,7 +46,7 @@ import {
 } from "@livekit/agents";
 import { fileURLToPath } from "node:url";
 
-import { Model, Processor, VAD } from "@ai-coustics/livekit-agents";
+import { Model, Processor, VAD } from "@ai-coustics/livekit-plugin";
 
 const enhancementModel = Model.fromFile(
   process.env.AIC_ENHANCEMENT_MODEL_PATH!,

@@ -62,7 +62,7 @@ file-path API.
 
 Node has the same model-selection problem plus a discovery limitation. The standalone LiveKit CLI
 only scans `node_modules/@livekit/agents-plugin-*`, so it does not import
-`@ai-coustics/livekit-agents`; registering a `Plugin.downloadFiles()` hook in our package would not
+`@ai-coustics/livekit-plugin`; registering a `Plugin.downloadFiles()` hook in our package would not
 make the modern command discover it.
 
 A future implementation needs both an explicit, build-time source of model IDs and a stable way
@@ -317,12 +317,12 @@ a release:
 
 The release workflow verifies that the tag points to a commit on `main` and matches both package
 versions. It then builds both distributions, publishes `ai-coustics-livekit` to PyPI and
-`@ai-coustics/livekit-agents` to npm, and creates a GitHub release containing all distribution
+`@ai-coustics/livekit-plugin` to npm, and creates a GitHub release containing all distribution
 artifacts. The GitHub release is created only after both registry publications succeed.
 
 Repository and registry configuration required by the publish jobs:
 
 - A GitHub `publish` environment, optionally with required reviewers.
 - A `PYPI_API_TOKEN` secret available to that environment.
-- An npm trusted publisher for `@ai-coustics/livekit-agents`, restricted to this repository,
+- An npm trusted publisher for `@ai-coustics/livekit-plugin`, restricted to this repository,
   `.github/workflows/release.yml`, and the `publish` environment.
