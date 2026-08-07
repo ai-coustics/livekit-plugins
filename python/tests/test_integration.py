@@ -176,6 +176,8 @@ async def test_real_vad_stream_detects_and_buffers_recorded_speech(
     assert len(ends) == 1
     assert starts[0].speech_duration > 0.0
     assert ends[0].silence_duration >= 0.1
+    assert len(starts[0].frames) == 1
+    assert len(ends[0].frames) == 1
     assert all(frame.sample_rate == SAMPLE_RATE for frame in ends[0].frames)
     buffered_speech = b"".join(bytes(frame.data) for frame in ends[0].frames)
     assert speech.tobytes() in buffered_speech

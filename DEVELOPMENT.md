@@ -28,7 +28,9 @@ reblock it at its original sample rate; the SDK performs any model-rate conversi
 They emit LiveKit inference and speech transition events from SDK predictions, reset all native
 and buffered state on `flush()`, and terminate their SDK telemetry session when closed. Event
 durations and speech lookback account for the SDK's prediction delay so decisions remain aligned
-with the input audio timeline. VAD support is intentionally Python-only until
+with the input audio timeline. A rolling frame deque retains only the required lookback, while a
+bounded contiguous PCM buffer makes each speech transition event expose its candidate audio as a
+single immutable `AudioFrame`. VAD support is intentionally Python-only until
 `@ai-coustics/aic-sdk` 0.22 exposes the standalone VAD API.
 
 The wrapper overrides the model-specific SDK duration defaults with LiveKit-compatible values:

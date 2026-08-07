@@ -224,7 +224,7 @@ class VADStream(agents.vad.VADStream):
 
         prefix_frames: deque[rtc.AudioFrame] = deque()
         prefix_samples = 0
-        speech_frames: list[rtc.AudioFrame] = []
+        speech_pcm = bytearray()
         speech_samples = 0
         speech_buffer_full = False
 
@@ -249,7 +249,7 @@ class VADStream(agents.vad.VADStream):
             inference_buffer.clear()
             prefix_frames.clear()
             prefix_samples = 0
-            speech_frames.clear()
+            speech_pcm.clear()
             speech_samples = 0
             speech_buffer_full = False
             speaking = False
@@ -302,21 +302,40 @@ class VADStream(agents.vad.VADStream):
             ):
                 prefix_samples -= prefix_frames.popleft().samples_per_channel
 
-        def append_speech_frame(frame: rtc.AudioFrame) -> None:
+        def append_speech_audio(frame: rtc.AudioFrame) -> None:
             nonlocal speech_samples, speech_buffer_full
 
             max_samples = (
                 int((self._prefix_padding_duration + self._max_buffered_speech) * frame.sample_rate)
                 + prediction_delay_samples
             )
-            if speech_samples + frame.samples_per_channel <= max_samples:
-                speech_frames.append(frame)
-                speech_samples += frame.samples_per_channel
-            elif not speech_buffer_full:
+            remaining_samples = max(0, max_samples - speech_samples)
+            copied_samples = min(frame.samples_per_channel, remaining_samples)
+            if copied_samples:
+                pcm = frame.data.cast("b")
+                speech_pcm.extend(pcm[: copied_samples * np.dtype(np.int16).itemsize])
+                speech_samples += copied_samples
+
+            if copied_samples < frame.samples_per_channel and not speech_buffer_full:
                 speech_buffer_full = True
                 logger.warning(
                     "max_buffered_speech reached; ignoring further audio for the current speech"
                 )
+
+        def speech_event_frames() -> list[rtc.AudioFrame]:
+            if not speech_samples:
+                return []
+
+            # Snapshot the mutable bytearray so the START event remains unchanged while more PCM
+            # is appended for the eventual END event.
+            return [
+                rtc.AudioFrame(
+                    data=bytes(speech_pcm),
+                    sample_rate=input_sample_rate,
+                    num_channels=1,
+                    samples_per_channel=speech_samples,
+                )
+            ]
 
         try:
             async for input_frame in self._input_ch:
@@ -405,7 +424,7 @@ class VADStream(agents.vad.VADStream):
                     # original mono PCM rather than a plugin-resampled copy.
                     update_prefix_buffer(inference_audio)
                     if speaking:
-                        append_speech_frame(inference_audio)
+                        append_speech_audio(inference_audio)
 
                     self._event_ch.send_nowait(
                         agents.vad.VADEvent(
@@ -427,8 +446,11 @@ class VADStream(agents.vad.VADStream):
                         speaking = True
                         silence_duration = 0.0
                         speech_duration = max(block_duration, aligned_raw_speech_duration)
-                        speech_frames[:] = prefix_frames
-                        speech_samples = sum(frame.samples_per_channel for frame in speech_frames)
+                        speech_pcm.clear()
+                        speech_samples = 0
+                        speech_buffer_full = False
+                        for prefix_frame in prefix_frames:
+                            append_speech_audio(prefix_frame)
                         self._event_ch.send_nowait(
                             agents.vad.VADEvent(
                                 type=agents.vad.VADEventType.START_OF_SPEECH,
@@ -436,7 +458,7 @@ class VADStream(agents.vad.VADStream):
                                 timestamp=timestamp,
                                 speech_duration=speech_duration,
                                 silence_duration=0.0,
-                                frames=list(speech_frames),
+                                frames=speech_event_frames(),
                                 probability=probability,
                                 inference_duration=inference_duration,
                                 speaking=True,
@@ -454,7 +476,7 @@ class VADStream(agents.vad.VADStream):
                                 timestamp=timestamp,
                                 speech_duration=completed_speech_duration,
                                 silence_duration=silence_duration,
-                                frames=list(speech_frames),
+                                frames=speech_event_frames(),
                                 probability=probability,
                                 inference_duration=inference_duration,
                                 speaking=False,
@@ -462,7 +484,7 @@ class VADStream(agents.vad.VADStream):
                             )
                         )
                         speech_duration = 0.0
-                        speech_frames.clear()
+                        speech_pcm.clear()
                         speech_samples = 0
                         speech_buffer_full = False
 

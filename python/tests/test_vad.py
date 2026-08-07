@@ -228,7 +228,17 @@ async def test_emits_inference_and_speech_transition_events() -> None:
     end = events[-1]
     assert start.speaking is True
     assert end.speaking is False
-    assert sum(frame.samples_per_channel for frame in end.frames) == 640
+    assert len(start.frames) == 1
+    assert len(end.frames) == 1
+    assert np.array_equal(
+        np.frombuffer(start.frames[0].data, dtype=np.int16),
+        np.arange(320, dtype=np.int16),
+    )
+    assert end.frames[0].samples_per_channel == 640
+    assert np.array_equal(
+        np.frombuffer(end.frames[0].data, dtype=np.int16),
+        np.arange(640, dtype=np.int16),
+    )
     assert native.terminate_calls == 1
 
 
@@ -264,16 +274,61 @@ async def test_aligns_events_and_candidate_audio_with_sdk_prediction_delay() -> 
     assert start.speech_duration == pytest.approx(0.04)
     assert start.raw_accumulated_speech == pytest.approx(0.04)
     assert start.timestamp - start.speech_duration == pytest.approx(0.03)
-    assert [int(np.frombuffer(frame.data, dtype=np.int16)[0]) for frame in start.frames] == [
+    assert len(start.frames) == 1
+    start_samples = np.frombuffer(start.frames[0].data, dtype=np.int16)
+    assert start_samples[::160].tolist() == [4, 5, 6, 7]
+    assert end.timestamp == pytest.approx(0.08)
+    assert end.silence_duration == pytest.approx(0.03)
+    assert end.speech_duration == pytest.approx(0.02)
+    assert end.raw_accumulated_silence == pytest.approx(0.03)
+
+
+@pytest.mark.asyncio
+async def test_caps_contiguous_speech_audio_and_keeps_rolling_prefix_current() -> None:
+    vad = create_vad(
+        model=FakeModel(sample_rate=10, block_size=4),
+        vad_parameters=VADParameters(minimum_speech_duration=0.0),
+        prefix_padding_duration=0.2,
+        max_buffered_speech=0.5,
+    )
+    stream = vad.stream()
+    native = FakeVadAsync.instances[0]
+    native.predictions.extend(
+        [
+            (0.9, True),
+            (0.1, False),
+            (0.1, False),
+            (0.9, True),
+            (0.1, False),
+        ]
+    )
+
+    stream.push_frame(make_frame(np.arange(1, 21, dtype=np.int16), sample_rate=10))
+    events = await collect_events(stream)
+
+    starts = [event for event in events if event.type == agents.vad.VADEventType.START_OF_SPEECH]
+    ends = [event for event in events if event.type == agents.vad.VADEventType.END_OF_SPEECH]
+    assert len(starts) == 2
+    assert len(ends) == 2
+    assert all(len(event.frames) == 1 for event in [*starts, *ends])
+    assert np.frombuffer(ends[0].frames[0].data, dtype=np.int16).tolist() == [
+        1,
+        2,
+        3,
         4,
         5,
         6,
         7,
     ]
-    assert end.timestamp == pytest.approx(0.08)
-    assert end.silence_duration == pytest.approx(0.03)
-    assert end.speech_duration == pytest.approx(0.02)
-    assert end.raw_accumulated_silence == pytest.approx(0.03)
+    assert np.frombuffer(starts[1].frames[0].data, dtype=np.int16).tolist() == [
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+    ]
 
 
 @pytest.mark.asyncio
