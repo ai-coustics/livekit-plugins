@@ -144,7 +144,7 @@ jobs:
 
       - name: Publish to npm
         run: |
-          package="@ai-coustics/livekit-agents"
+          package="@ai-coustics/livekit-plugin"
           if npm view "$package@$GITHUB_REF_NAME" version >/dev/null 2>&1; then
             echo "$package@$GITHUB_REF_NAME is already published"
           else

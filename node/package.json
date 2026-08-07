@@ -1,5 +1,5 @@
 {
-  "name": "@ai-coustics/livekit-agents",
+  "name": "@ai-coustics/livekit-plugin",
   "version": "0.1.0",
   "description": "ai-coustics noise cancellation and VAD for LiveKit Agents",
   "license": "Apache-2.0",
