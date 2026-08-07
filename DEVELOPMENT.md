@@ -22,7 +22,12 @@ enhanced signal is duplicated across the original channel count. This preserves 
 geometry and metadata.
 
 Processing errors are logged and the original LiveKit frame is returned. This fail-open behavior
-keeps room audio flowing if the SDK rejects a frame or encounters a runtime error.
+keeps room audio flowing if the SDK rejects a frame or encounters a runtime error. Processor logs
+use LiveKit's logging path and include the model, stream identity when available, audio format,
+failure stage, and timing context. Repeated failures and slower-than-realtime warnings are
+rate-limited; recovery and close events summarize the affected frames, processing time, real-time
+factor, and maximum accumulated processing backlog. The Node implementation falls back to the
+console for operational messages when LiveKit has not initialized its logger.
 
 Each `VAD` creates one native SDK VAD per LiveKit `VADStream`: `aic_sdk.VadAsync` in Python and
 `@ai-coustics/aic-sdk`'s synchronous `Vad` in Node. Streams downmix input and reblock it at its
@@ -96,6 +101,25 @@ tap, a separate VAD audio input, or a branching audio-processing graph. Until th
 Processor-only and VAD-only configurations have the intended SDK topology; using both through the
 standard RoomIO path is functional, but the VAD operates on Processor output and its event timing
 cannot compensate for the Processor's independent audio delay.
+
+### First-class Processor metrics
+
+The plugins currently expose Processor health through structured LiveKit logs. This covers events
+that are immediately actionable—initialization and format changes, failures and recovery,
+slower-than-realtime processing, and a lifetime summary—but it does not produce LiveKit metrics.
+
+LiveKit's `FrameProcessor` interface has lifecycle and processing hooks but no metrics event, and
+the Agents metrics model has no `FrameProcessorMetrics` equivalent. Adding private plugin metric
+objects would therefore bypass the normal `AgentSession` collection, `log_metrics()`, usage
+collection, and OpenTelemetry export paths.
+
+A future upstream implementation should let RoomIO or `AgentSession` receive and emit frame
+processor metrics. Useful fields include processed and failed frame counts, input-audio duration,
+total and maximum processing duration, average and maximum real-time factor, maximum accumulated
+processing backlog, initialization count, and the model's fixed audio delay. The fixed audio
+delay describes signal alignment and must remain distinct from processing backlog, which is
+runtime scheduling and compute debt. Once LiveKit provides that surface, these plugins can map the
+same counters used by their structured logs into the standard metrics pipeline.
 
 ### Richer upstream VAD metrics
 

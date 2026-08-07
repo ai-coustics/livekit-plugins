@@ -1,6 +1,26 @@
 import { AudioFrame } from "@livekit/rtc-node";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const logging = vi.hoisted(() => {
+  const calls: Array<{
+    level: "debug" | "info" | "warn" | "error";
+    payload: Record<string, unknown>;
+    message: string;
+  }> = [];
+  const write = (level: "debug" | "info" | "warn" | "error") =>
+    (payload: Record<string, unknown>, message: string) =>
+      calls.push({ level, payload, message });
+  return {
+    calls,
+    logger: {
+      debug: write("debug"),
+      info: write("info"),
+      warn: write("warn"),
+      error: write("error"),
+    },
+  };
+});
+
 const sdk = vi.hoisted(() => {
   const instances: FakeProcessor[] = [];
   const nativeCalls: Array<[string, number?]> = [];
@@ -26,16 +46,21 @@ const sdk = vi.hoisted(() => {
     static fromFileCalls: string[] = [];
     static downloadCalls: Array<[string, string]> = [];
 
+    constructor(
+      readonly sampleRate = 16000,
+      readonly blockSize = 2,
+    ) {}
+
     getId(): string {
       return "test-model";
     }
 
     getOptimalSampleRate(): number {
-      return 16000;
+      return this.sampleRate;
     }
 
     getOptimalBlockSize(): number {
-      return 2;
+      return this.blockSize;
     }
 
     static fromFile(modelPath: string): FakeModel {
@@ -99,6 +124,11 @@ vi.mock("@ai-coustics/aic-sdk", () => ({
   _setSdkId: (id: number) => sdk.nativeCalls.push(["sdk_id", id]),
 }));
 
+vi.mock("@livekit/agents", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@livekit/agents")>();
+  return { ...actual, log: () => logging.logger };
+});
+
 import {
   Model,
   Processor,
@@ -113,6 +143,7 @@ describe("Processor", () => {
     sdk.FakeModel.downloadCalls.length = 0;
     sdk.FakeProcessor.constructorError = null;
     sdk.nativeCalls.length = 0;
+    logging.calls.length = 0;
   });
 
   it("constructs without a probe frame and processes one complete LiveKit frame", () => {
@@ -218,8 +249,7 @@ describe("Processor", () => {
     enhancer.process(frame);
   });
 
-  it("deduplicates processing errors and releases on close", () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  it("rate-limits structured processing errors and reports recovery", () => {
     const enhancer = new Processor({
       model: new sdk.FakeModel(),
       licenseKey: "test-license",
@@ -230,11 +260,107 @@ describe("Processor", () => {
 
     expect(enhancer.process(frame)).toBe(frame);
     expect(enhancer.process(frame)).toBe(frame);
-    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const failures = logging.calls.filter(
+      ({ level, message }) =>
+        level === "error" && message.includes("failed; passing audio through"),
+    );
+    expect(failures).toHaveLength(1);
+    expect(failures[0]!.payload).toMatchObject({
+      modelProvider: "ai-coustics",
+      modelName: "test-model",
+      processingStage: "process",
+      errorType: "Error",
+      errorMessage: "boom",
+      consecutiveFailures: 1,
+      failedFrameCount: 1,
+      error: processor.error,
+    });
+
+    processor.error = null;
+    enhancer.process(frame);
+    const recovery = logging.calls.find(({ message }) =>
+      message.includes("Processor recovered"),
+    );
+    expect(recovery?.payload).toMatchObject({
+      recoveredFailureCount: 2,
+      failedFrameCount: 2,
+      lastFailureStage: "process",
+      lastErrorType: "Error",
+      lastErrorMessage: "boom",
+    });
+
     enhancer.close();
     expect(processor.terminateCalls).toBe(1);
     expect(enhancer.process(frame)).toBe(frame);
-    errorSpy.mockRestore();
+    const summary = logging.calls.find(
+      ({ message }) => message === "ai-coustics Processor closed",
+    );
+    expect(summary?.payload).toMatchObject({
+      frameCount: 3,
+      processedFrameCount: 1,
+      failedFrameCount: 2,
+      initializationCount: 1,
+      audioDelaySamples: 42,
+      audioDelayMs: 2.625,
+    });
+  });
+
+  it("adds stream context to logs and resets between publications", () => {
+    const enhancer = new Processor({
+      model: new sdk.FakeModel(),
+      licenseKey: "test-license",
+    });
+    const processor = sdk.instances[0]!;
+    enhancer.onStreamInfoUpdated({
+      roomName: "diagnostic-room",
+      participantIdentity: "caller",
+      publicationSid: "TR_first",
+    });
+    enhancer.process(new AudioFrame(new Int16Array(800), 16000, 1, 800));
+
+    const initialized = logging.calls.find(
+      ({ message }) => message === "ai-coustics Processor initialized",
+    );
+    expect(initialized?.payload).toMatchObject({
+      roomName: "diagnostic-room",
+      participantIdentity: "caller",
+      publicationSid: "TR_first",
+      audioDelaySamples: 42,
+      audioDelayMs: 2.625,
+    });
+
+    enhancer.onStreamInfoUpdated({
+      roomName: "diagnostic-room",
+      participantIdentity: "caller",
+      publicationSid: "TR_second",
+    });
+    enhancer.onStreamInfoCleared();
+    expect(processor.context.resetCount).toBe(2);
+  });
+
+  it("warns immediately for cumulative processing backlog", () => {
+    const clock = [0, 0, 0, 0, 310, 310];
+    const now = vi
+      .spyOn(performance, "now")
+      .mockImplementation(() => clock.shift()!);
+    const enhancer = new Processor({
+      model: new sdk.FakeModel(100, 10),
+      licenseKey: "test-license",
+    });
+
+    enhancer.process(new AudioFrame(new Int16Array(10), 100, 1, 10));
+
+    const warning = logging.calls.find(({ message }) =>
+      message.includes("falling behind realtime"),
+    );
+    expect(warning?.payload).toMatchObject({
+      processingDurationMs: 310,
+      sdkProcessingDurationMs: 310,
+      frameDurationMs: 100,
+      realtimeFactor: 3.1,
+      processingBacklogMs: 210,
+    });
+    now.mockRestore();
   });
 
   it("exposes SDK model download and file loading", () => {
