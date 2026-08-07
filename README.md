@@ -24,7 +24,7 @@ Install the package for your runtime:
 
 ```bash
 pip uninstall livekit-plugins-ai-coustics
-pip install ai-coustics-livekit
+pip install ai-coustics-livekit-plugin
 
 # or
 npm uninstall @livekit/plugins-ai-coustics
@@ -124,7 +124,7 @@ The inference STT, LLM, and TTS instances are illustrative; keep the providers a
 your agent. The ai-coustics-specific integration points are `AgentSession(vad=vad)` and
 `AudioInputOptions(noise_cancellation=processor)`.
 
-The distribution is named `ai-coustics-livekit`, while its import follows LiveKit's plugin
+The distribution is named `ai-coustics-livekit-plugin`, while its import follows LiveKit's plugin
 namespace: `livekit.plugins.ai_coustics`. Installing it together with the official distribution
 would make ownership of that import path ambiguous and is unsupported.
 

@@ -316,7 +316,7 @@ a release:
    ```
 
 The release workflow verifies that the tag points to a commit on `main` and matches both package
-versions. It then builds both distributions, publishes `ai-coustics-livekit` to PyPI and
+versions. It then builds both distributions, publishes `ai-coustics-livekit-plugin` to PyPI and
 `@ai-coustics/livekit-plugin` to npm, and creates a GitHub release containing all distribution
 artifacts. The GitHub release is created only after both registry publications succeed.
 
