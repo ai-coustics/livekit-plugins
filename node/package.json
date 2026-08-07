@@ -26,9 +26,6 @@
     "NOTICE",
     "README.md"
   ],
-  "engines": {
-    "node": ">=18"
-  },
   "scripts": {
     "build": "tsup",
     "check": "tsc --noEmit",
