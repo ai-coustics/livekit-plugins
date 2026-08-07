@@ -42,6 +42,10 @@ audio is downmixed to mono and reblocked at its original sample rate. The SDK ha
 conversion internally, while event audio remains at the LiveKit input rate. Processing runs
 asynchronously outside the agent event loop.
 
+The wrapper defaults to 50 ms of minimum speech and a 250 ms speech hold, matching LiveKit's VAD
+expectations and streaming turn-detector requirement. Override either value with `VADParameters`
+when a different endpointing profile is needed.
+
 The underlying aic-sdk 3 Processor accepts mono audio. Multichannel LiveKit frames are downmixed
 to mono for processing, then the enhanced signal is duplicated across the original channel count.
 

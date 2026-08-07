@@ -41,7 +41,8 @@ Pass `noise_cancellation` anywhere LiveKit accepts an
 options. `license_key=` can be passed explicitly instead of using `AIC_SDK_LICENSE`.
 
 Pass `vad` as the `vad=` argument to a LiveKit `AgentSession`. It uses a dedicated VAD model and
-does not depend on the noise-cancellation Processor.
+does not depend on the noise-cancellation Processor. Its default 50 ms minimum speech and 250 ms
+speech hold match LiveKit's streaming turn-detector requirements.
 
 The Python distribution is named `ai-coustics-livekit`, but its import follows LiveKit's plugin
 namespace: `livekit.plugins.ai_coustics`. It replaces the official

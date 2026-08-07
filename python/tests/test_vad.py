@@ -166,6 +166,17 @@ def test_constructs_first_native_vad_eagerly_without_an_audio_config() -> None:
     assert vad.min_silence_duration == 0.4
 
 
+def test_uses_livekit_compatible_duration_defaults() -> None:
+    vad = create_vad()
+    context = FakeVadAsync.instances[0].context
+    vad.set_parameters(VADParameters(sensitivity=0.7))
+
+    assert context.get_parameter(aic_sdk.VadParameter.Sensitivity) == 0.7
+    assert context.get_parameter(aic_sdk.VadParameter.SpeechHoldDuration) == 0.25
+    assert context.get_parameter(aic_sdk.VadParameter.MinimumSpeechDuration) == 0.05
+    assert vad.min_silence_duration == 0.25
+
+
 def test_wraps_native_vad_construction_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     sdk_error = RuntimeError("not a VAD model")
 

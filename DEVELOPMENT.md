@@ -31,6 +31,10 @@ durations and speech lookback account for the SDK's prediction delay so decision
 with the input audio timeline. VAD support is intentionally Python-only until
 `@ai-coustics/aic-sdk` 0.22 exposes the standalone VAD API.
 
+The wrapper overrides the model-specific SDK duration defaults with LiveKit-compatible values:
+50 ms minimum speech and a 250 ms speech hold. The latter satisfies the minimum silence required
+by LiveKit's streaming turn detector. Explicit `VADParameters` values still take precedence.
+
 ## Future work
 
 ### Raw-audio fan-out for combined Processor and VAD use

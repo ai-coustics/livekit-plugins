@@ -14,6 +14,8 @@ from .log import logger
 from .processor import _license_key, _pcm16_to_float32
 
 _SLOW_WARNING_INTERVAL = 10.0
+_DEFAULT_SPEECH_HOLD_DURATION = 0.25
+_DEFAULT_MINIMUM_SPEECH_DURATION = 0.05
 
 
 @dataclass
@@ -49,7 +51,14 @@ class VAD(agents.vad.VAD):
         model_block_size = model.get_optimal_block_size(model_sample_rate)
         self._prefix_padding_duration = prefix_padding_duration
         self._max_buffered_speech = max_buffered_speech
-        self._parameters = VADParameters()
+        # LiveKit's streaming turn detector requires at least 250 ms of VAD silence, and its
+        # built-in VADs require 50 ms of speech before activation. Use those integration-friendly
+        # defaults instead of the model-specific SDK defaults. VADParameters fields remain
+        # optional so later set_parameters() calls are still partial updates.
+        self._parameters = VADParameters(
+            speech_hold_duration=_DEFAULT_SPEECH_HOLD_DURATION,
+            minimum_speech_duration=_DEFAULT_MINIMUM_SPEECH_DURATION,
+        )
         self._streams: weakref.WeakSet[VADStream] = weakref.WeakSet()
 
         super().__init__(
