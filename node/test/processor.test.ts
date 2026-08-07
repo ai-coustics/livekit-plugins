@@ -27,9 +27,12 @@ const sdk = vi.hoisted(() => {
 
   class FakeContext {
     parameters: Array<[number, number]> = [];
+    parameterErrors = new Map<number, Error>();
     resetCount = 0;
 
     setParameter(parameter: number, value: number): void {
+      const error = this.parameterErrors.get(parameter);
+      if (error) throw error;
       this.parameters.push([parameter, value]);
     }
 
@@ -211,7 +214,7 @@ describe("Processor", () => {
     ]);
   });
 
-  it("validates Processor parameters without reapplying them", () => {
+  it("warns about rejected Processor parameters without reapplying them", () => {
     const enhancer = new Processor({
       model: new sdk.FakeModel(),
       licenseKey: "test-license",
@@ -226,9 +229,52 @@ describe("Processor", () => {
     expect(processor.context.parameters.filter(([key]) => key === 1)).toEqual([
       [1, 0.9],
     ]);
-    expect(() => enhancer.setParameters({ enhancementLevel: 1.1 })).toThrow(
-      "enhancementLevel",
-    );
+    processor.context.parameterErrors.set(1, new Error("enhancement level out of range"));
+    enhancer.setParameters({ enhancementLevel: 1.1, bypass: false });
+
+    expect(processor.context.parameters).not.toContainEqual([1, 1.1]);
+    expect(processor.context.parameters).toContainEqual([0, 0]);
+    expect(
+      logging.calls.find(
+        ({ level, message }) =>
+          level === "warn" && message.includes("Processor parameter rejected"),
+      )?.payload,
+    ).toMatchObject({
+      parameter: "enhancementLevel",
+      parameterValue: 1.1,
+    });
+  });
+
+  it("continues other updates when the SDK rejects one parameter", () => {
+    const enhancer = new Processor({
+      model: new sdk.FakeModel(),
+      licenseKey: "test-license",
+    });
+    const context = sdk.instances[0]!.context;
+    context.parameterErrors.set(1, new Error("SDK rejected parameter"));
+
+    enhancer.setParameters({ enhancementLevel: 0.8, bypass: true });
+
+    expect(context.parameters).not.toContainEqual([1, 0.8]);
+    expect(context.parameters).toContainEqual([0, 1]);
+    expect(
+      logging.calls.find(({ message }) => message.includes("Processor parameter rejected"))
+        ?.payload,
+    ).toMatchObject({
+      parameter: "enhancementLevel",
+      errorMessage: "SDK rejected parameter",
+    });
+  });
+
+  it("delegates parameter validation to the SDK", () => {
+    const enhancer = new Processor({
+      model: new sdk.FakeModel(),
+      licenseKey: "test-license",
+    });
+
+    enhancer.setParameters({ enhancementLevel: 1.1 });
+
+    expect(sdk.instances[0]!.context.parameters).toContainEqual([1, 1.1]);
   });
 
   it("passes through while disabled and resets immediately when re-enabled", () => {
