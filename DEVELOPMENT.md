@@ -31,6 +31,38 @@ durations and speech lookback account for the SDK's prediction delay so decision
 with the input audio timeline. VAD support is intentionally Python-only until
 `@ai-coustics/aic-sdk` 0.22 exposes the standalone VAD API.
 
+## Future work
+
+### Raw-audio fan-out for combined Processor and VAD use
+
+The ai-coustics SDK recommends feeding the Processor and VAD the same original microphone blocks
+in parallel. Enhancement changes the signal and adds an independent audio delay, so passing the
+Processor output into the VAD stacks that delay in front of the VAD's prediction delay.
+
+LiveKit Agents currently provides one shared audio input to STT and VAD. When `Processor` is
+configured as RoomIO's `noise_cancellation`, RoomIO applies it before the audio reaches the
+`AgentSession`; consequently, the session's VAD receives enhanced, delayed audio:
+
+```text
+microphone -> Processor -> AgentSession -> STT and VAD
+```
+
+The intended topology is:
+
+```text
+                  +-> VAD -> speech decisions
+microphone -------+
+                  +-> Processor -> enhanced audio -> STT
+```
+
+The plugin cannot construct this topology itself because its `VADStream` only sees frames after
+RoomIO processing, while the `FrameProcessor` has no way to supply a separate raw stream to the
+session VAD. A complete solution therefore needs upstream LiveKit Agents support for a raw-audio
+tap, a separate VAD audio input, or a branching audio-processing graph. Until that exists,
+Processor-only and VAD-only configurations have the intended SDK topology; using both through the
+standard RoomIO path is functional, but the VAD operates on Processor output and its event timing
+cannot compensate for the Processor's independent audio delay.
+
 ## Setup
 
 Python development uses `uv`:
