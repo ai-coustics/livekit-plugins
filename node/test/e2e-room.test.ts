@@ -1,4 +1,9 @@
-import { initializeLogger, voice } from "@livekit/agents";
+import {
+  VADEventType,
+  initializeLogger,
+  voice,
+  type VADStream,
+} from "@livekit/agents";
 import {
   AudioFrame,
   AudioSource,
@@ -16,13 +21,15 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { Model, Processor } from "../src/index.js";
+import { Model, Processor, VAD } from "../src/index.js";
 
 const describeIf = process.env.AIC_SDK_LICENSE ? describe : describe.skip;
 const livekitUrl = process.env.LIVEKIT_URL ?? "ws://127.0.0.1:7880";
 const livekitApiKey = process.env.LIVEKIT_API_KEY ?? "devkey";
 const livekitApiSecret = process.env.LIVEKIT_API_SECRET ?? "secret";
 const modelId = process.env.AIC_INTEGRATION_MODEL_ID ?? "quail-vf-2.2-s-16khz";
+const vadModelId =
+  process.env.AIC_INTEGRATION_VAD_MODEL_ID ?? "vad-2.1-xxs-16khz";
 const modelDir =
   process.env.AIC_INTEGRATION_MODEL_DIR ??
   path.join(os.homedir(), ".cache", "aic-sdk", "models");
@@ -65,6 +72,23 @@ class ObservedProcessor extends Processor {
   override close(): void {
     this.closed = true;
     super.close();
+  }
+}
+
+class ObservedVAD extends VAD {
+  inferenceEvents = 0;
+
+  override stream(): VADStream {
+    const stream = super.stream();
+    const next = stream.next.bind(stream);
+    stream.next = async () => {
+      const result = await next();
+      if (!result.done && result.value.type === VADEventType.INFERENCE_DONE) {
+        this.inferenceEvents += 1;
+      }
+      return result;
+    };
+    return stream;
   }
 }
 
@@ -148,13 +172,15 @@ afterAll(async () => {
   await dispose();
 });
 
-describeIf("Processor in a real AgentSession room", () => {
+describeIf("Processor and VAD in a real AgentSession room", () => {
   it(
-    "processes microphone audio after the license grace period and closes with RoomIO",
+    "processes microphone audio and consumes VAD events after the license grace period",
     async () => {
       fs.mkdirSync(modelDir, { recursive: true });
       const model = Model.fromFile(Model.download(modelId, modelDir));
+      const vadModel = Model.fromFile(Model.download(vadModelId, modelDir));
       const processor = new ObservedProcessor({ model });
+      const detector = new ObservedVAD({ model: vadModel });
       const roomName = `ai-coustics-e2e-${randomUUID()}`;
       let agentRoom: Room | undefined;
       let publisherRoom: Room | undefined;
@@ -171,7 +197,7 @@ describeIf("Processor in a real AgentSession room", () => {
         publisherRoom = await connectRoom({ identity: "publisher", roomName });
 
         session = new voice.AgentSession({
-          vad: null,
+          vad: detector,
           turnHandling: { turnDetection: "manual" },
           userAwayTimeout: null,
         });
@@ -219,6 +245,7 @@ describeIf("Processor in a real AgentSession room", () => {
             (processedAt) => processedAt >= processor.createdAt + licenseGracePeriodMs,
           ),
         ).toBe(true);
+        expect(detector.inferenceEvents).toBeGreaterThan(0);
       } finally {
         if (sessionStarted) {
           await session!.close();
@@ -228,6 +255,7 @@ describeIf("Processor in a real AgentSession room", () => {
         await source?.close();
         await publisherRoom?.disconnect();
         await agentRoom?.disconnect();
+        await detector.close();
       }
 
       expect(processor.closed).toBe(true);

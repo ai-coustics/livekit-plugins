@@ -6,3 +6,4 @@ export {
   type ProcessorOptions,
   type ProcessorParameters,
 } from "./processor.js";
+export { VAD, type VADOptions, type VADParameters } from "./vad.js";

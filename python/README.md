@@ -53,5 +53,5 @@ The distribution is named `ai-coustics-livekit`, while its import uses LiveKit's
 It replaces `livekit-plugins-ai-coustics`; installing both packages in one environment is not
 supported because they provide the same `livekit.plugins.ai_coustics` import path.
 
-The Node.js package currently integrates only the Processor; its VAD wrapper will follow after the
-Node SDK supports the new standalone VAD API.
+The Node.js package also provides Processor and standalone VAD integrations with the corresponding
+camelCase API.

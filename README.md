@@ -4,14 +4,12 @@ This repository contains ai-coustics-maintained noise cancellation plugins for b
 Agents runtimes:
 
 - `python/`: `aic_sdk.Processor` and `aic_sdk.VadAsync` adapted to LiveKit Agents
-- `node/`: `@ai-coustics/aic-sdk` adapted to Node's `FrameProcessor<AudioFrame>`
+- `node/`: `@ai-coustics/aic-sdk` Processor and VAD adapted to LiveKit Agents
 
-The Python package includes Processor and VAD integrations. The Node package currently includes
-the Processor integration; its SDK now exposes the standalone VAD API, and the LiveKit adapter
-will be added separately.
+Both packages include Processor and standalone VAD integrations.
 
 The plugins use the public ai-coustics SDK directly. Applications load or download SDK models and
-pass them to `Processor` or Python `VAD`, retaining control over model provisioning and storage.
+pass them to `Processor` or `VAD`, retaining control over model provisioning and storage.
 
 ## Python
 
@@ -56,7 +54,7 @@ Install the package from `node/`, set `AIC_SDK_LICENSE`, and construct the filte
 the agent:
 
 ```ts
-import { Model, Processor } from "@ai-coustics/livekit-agents";
+import { Model, Processor, VAD } from "@ai-coustics/livekit-agents";
 
 const modelPath = Model.download("quail-vf-2.2-l-16khz", "./models");
 const model = Model.fromFile(modelPath);
@@ -66,16 +64,22 @@ const noiseCancellation = new Processor({
   processorParameters: { enhancementLevel: 1.0 },
 });
 
+const vadModelPath = Model.download("vad-2.1-xxs-16khz", "./models");
+const vadModel = Model.fromFile(vadModelPath);
+const vad = new VAD({ model: vadModel });
+
 // For a provisioned model, use: Model.fromFile("./models/quail.aicmodel")
 ```
 
 Pass `noiseCancellation` anywhere LiveKit accepts a `FrameProcessor<AudioFrame>`.
 `licenseKey` can be passed explicitly instead of using `AIC_SDK_LICENSE`.
+Pass `vad` as the `vad` option to a LiveKit `AgentSession`. The VAD runs the SDK at the incoming
+LiveKit sample rate; the SDK performs any model-rate conversion internally.
 
-Both implementations expose runtime `ProcessorParameters`. Apply partial runtime updates with
-`set_parameters` / `setParameters`; the SDK retains values across stream reconfiguration. Use
-bypass for latency-compensated passthrough; disabling the processor returns immediate, undelayed
-input.
+Both implementations expose runtime `ProcessorParameters` and `VADParameters`. Apply partial
+runtime updates with `set_parameters` / `setParameters`; the SDK retains values across stream
+reconfiguration. Use bypass for latency-compensated passthrough; disabling the processor returns
+immediate, undelayed input.
 
 ## Development
 

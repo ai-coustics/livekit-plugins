@@ -24,15 +24,18 @@ geometry and metadata.
 Processing errors are logged and the original LiveKit frame is returned. This fail-open behavior
 keeps room audio flowing if the SDK rejects a frame or encounters a runtime error.
 
-The Python `VAD` creates one `aic_sdk.VadAsync` per LiveKit `VADStream`. Streams downmix input and
-reblock it at its original sample rate; the SDK performs any model-rate conversion internally.
-They emit LiveKit inference and speech transition events from SDK predictions, reset all native
-and buffered state on `flush()`, and terminate their SDK telemetry session when closed. Event
-durations and speech lookback account for the SDK's prediction delay so decisions remain aligned
-with the input audio timeline. A rolling frame deque retains only the required lookback, while a
-bounded contiguous PCM buffer makes each speech transition event expose its candidate audio as a
-single immutable `AudioFrame`. VAD support is currently Python-only; the Node SDK exposes the
-standalone VAD API as of 0.22, and its LiveKit adapter will be added separately.
+Each `VAD` creates one native SDK VAD per LiveKit `VADStream`: `aic_sdk.VadAsync` in Python and
+`@ai-coustics/aic-sdk`'s synchronous `Vad` in Node. Streams downmix input and reblock it at its
+original sample rate; the SDK performs any model-rate conversion internally. They emit LiveKit
+inference and speech transition events from SDK predictions, reset all native and buffered state
+on `flush()`, and terminate their SDK session when closed. Event durations and speech lookback
+account for the SDK's prediction delay so decisions remain aligned with the input audio timeline.
+A rolling frame buffer retains only the required lookback, while a bounded contiguous PCM buffer
+makes each speech transition event expose its candidate audio as a single immutable `AudioFrame`.
+
+Python's async SDK API lets native VAD work yield naturally. The Node SDK VAD API is synchronous,
+so each native inference runs on the JavaScript thread used by the LiveKit VAD stream. Structured
+backlog warnings identify sustained slower-than-realtime processing.
 
 The wrapper overrides the model-specific SDK duration defaults with LiveKit-compatible values:
 50 ms minimum speech and a 250 ms speech hold. The latter satisfies the minimum silence required

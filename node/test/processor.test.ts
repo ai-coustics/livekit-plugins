@@ -90,6 +90,12 @@ vi.mock("@ai-coustics/aic-sdk", () => ({
   Model: sdk.FakeModel,
   Processor: sdk.FakeProcessor,
   ProcessorParameter: { Bypass: 0, EnhancementLevel: 1 },
+  Vad: class {},
+  VadParameter: {
+    SpeechHoldDuration: 2,
+    Sensitivity: 3,
+    MinimumSpeechDuration: 4,
+  },
   _setSdkId: (id: number) => sdk.nativeCalls.push(["sdk_id", id]),
 }));
 

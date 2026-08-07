@@ -14,6 +14,13 @@ declare module "@ai-coustics/aic-sdk" {
   export type ProcessorParameter =
     (typeof ProcessorParameter)[keyof typeof ProcessorParameter];
 
+  export const VadParameter: {
+    readonly SpeechHoldDuration: number;
+    readonly Sensitivity: number;
+    readonly MinimumSpeechDuration: number;
+  };
+  export type VadParameter = (typeof VadParameter)[keyof typeof VadParameter];
+
   export class ProcessorContext {
     reset(): void;
     setParameter(parameter: ProcessorParameter, value: number): void;
@@ -31,6 +38,28 @@ declare module "@ai-coustics/aic-sdk" {
     ): void;
     process(buffer: Float32Array): void;
     getContext(): ProcessorContext;
+    terminateSession(): void;
+  }
+
+  export class VadContext {
+    reset(): void;
+    isSpeechDetected(): boolean;
+    rawVadProbability(): number;
+    setParameter(parameter: VadParameter, value: number): void;
+    getParameter(parameter: VadParameter): number;
+    getPredictionDelay(): number;
+    updateBearerToken(token: string): void;
+  }
+
+  export class Vad {
+    constructor(model: Model, licenseKey: string);
+    initialize(
+      sampleRate: number,
+      blockSize: number,
+      variableBlockSize?: boolean,
+    ): void;
+    process(buffer: Float32Array): void;
+    getContext(): VadContext;
     terminateSession(): void;
   }
 
