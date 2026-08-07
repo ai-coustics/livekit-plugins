@@ -357,13 +357,21 @@ class VADStream(agents.vad.VADStream):
                     inference_block_size = self._model.get_optimal_block_size(input_sample_rate)
                     stream_format = (input_sample_rate, inference_block_size)
                     if configured_format != stream_format:
-                        await native_vad.initialize_async(
-                            aic_sdk.ProcessorConfig(
-                                sample_rate=input_sample_rate,
-                                block_size=inference_block_size,
-                                variable_block_size=False,
+                        try:
+                            await native_vad.initialize_async(
+                                aic_sdk.ProcessorConfig(
+                                    sample_rate=input_sample_rate,
+                                    block_size=inference_block_size,
+                                    variable_block_size=False,
+                                )
                             )
-                        )
+                        except Exception as error:
+                            raise RuntimeError(
+                                "ai-coustics VAD initialization failed "
+                                f"(model={self._model.get_id()}, "
+                                f"sample_rate={input_sample_rate}, "
+                                f"block_size={inference_block_size}): {error}"
+                            ) from error
                         configured_format = stream_format
                         # SDK predictions describe earlier input. The delay is reported in samples
                         # of the configured (LiveKit input) rate, not the model's internal rate.

@@ -79,6 +79,7 @@ class FakeVadAsync:
         self.blocks: list[np.ndarray] = []
         self.initialized_configs: list[aic_sdk.ProcessorConfig] = []
         self.terminate_calls = 0
+        self.initialize_error: Exception | None = None
         self.on_process: Callable[[], None] | None = None
         self.process_error: Exception | None = None
         self.instances.append(self)
@@ -90,6 +91,8 @@ class FakeVadAsync:
     async def initialize_async(self, config: aic_sdk.ProcessorConfig) -> None:
         self.config = config
         self.initialized_configs.append(config)
+        if self.initialize_error is not None:
+            raise self.initialize_error
 
     async def process_async(self, block: np.ndarray) -> None:
         self.blocks.append(block.copy())
@@ -393,6 +396,30 @@ async def test_inference_error_includes_model_and_audio_format() -> None:
         match=(
             r"ai-coustics VAD inference failed "
             r"\(model=vad-test-model, sample_rate=48000, block_size=480\): native failure"
+        ),
+    ) as exc_info:
+        await collect_events(stream)
+
+    assert exc_info.value.__cause__ is sdk_error
+    assert native.terminate_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_initialization_error_includes_model_and_audio_format() -> None:
+    vad = create_vad(model=FakeModel(sample_rate=16000, block_size=160))
+    stream = vad.stream()
+    native = FakeVadAsync.instances[0]
+    sdk_error = ValueError("unsupported configuration")
+    native.initialize_error = sdk_error
+
+    stream.push_frame(make_frame(np.arange(480, dtype=np.int16), sample_rate=48000))
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            r"ai-coustics VAD initialization failed "
+            r"\(model=vad-test-model, sample_rate=48000, block_size=480\): "
+            r"unsupported configuration"
         ),
     ) as exc_info:
         await collect_events(stream)
