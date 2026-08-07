@@ -84,9 +84,7 @@ from livekit.plugins import ai_coustics
 
 # Loading model weights is relatively expensive, so reuse the immutable models across jobs in
 # this worker process. Each job still gets independent Processor and VAD state below.
-enhancement_model = ai_coustics.Model.from_file(
-    os.environ["AIC_ENHANCEMENT_MODEL_PATH"]
-)
+enhancement_model = ai_coustics.Model.from_file(os.environ["AIC_ENHANCEMENT_MODEL_PATH"])
 vad_model = ai_coustics.Model.from_file(os.environ["AIC_VAD_MODEL_PATH"])
 
 server = AgentServer()
