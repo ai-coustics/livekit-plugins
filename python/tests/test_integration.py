@@ -100,9 +100,18 @@ async def test_real_vad_stream_emits_livekit_inference_events(
         vad_parameters=ai_coustics.VADParameters(sensitivity=0.5),
     )
     stream = detector.stream()
-    silence = np.zeros(SAMPLES_PER_FRAME, dtype=np.int16)
+    input_sample_rate = 48000
+    input_samples_per_frame = input_sample_rate // 20
+    silence = np.zeros(input_samples_per_frame, dtype=np.int16)
     for _ in range(10):
-        stream.push_frame(_frame(0, data=silence))
+        stream.push_frame(
+            rtc.AudioFrame(
+                data=silence.tobytes(),
+                sample_rate=input_sample_rate,
+                num_channels=1,
+                samples_per_channel=input_samples_per_frame,
+            )
+        )
     stream.end_input()
 
     events = [event async for event in stream]
@@ -113,3 +122,4 @@ async def test_real_vad_stream_emits_livekit_inference_events(
     assert inference_events
     assert all(0.0 <= event.probability <= 1.0 for event in inference_events)
     assert all(event.frames[0].num_channels == 1 for event in inference_events)
+    assert all(event.frames[0].sample_rate == input_sample_rate for event in inference_events)

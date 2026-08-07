@@ -25,8 +25,7 @@ class FakeModel:
         return self.sample_rate
 
     def get_optimal_block_size(self, sample_rate: int) -> int:
-        assert sample_rate == self.sample_rate
-        return self.block_size
+        return round(self.block_size * sample_rate / self.sample_rate)
 
 
 class FakeVadContext:
@@ -65,7 +64,7 @@ class FakeVadAsync:
         self,
         model: object,
         license_key: str,
-        config: aic_sdk.ProcessorConfig,
+        config: aic_sdk.ProcessorConfig | None = None,
     ) -> None:
         self.model = model
         self.license_key = license_key
@@ -73,12 +72,17 @@ class FakeVadAsync:
         self.context = FakeVadContext()
         self.predictions: deque[tuple[float, bool]] = deque()
         self.blocks: list[np.ndarray] = []
+        self.initialized_configs: list[aic_sdk.ProcessorConfig] = []
         self.terminate_calls = 0
         self.instances.append(self)
         native_calls.append(("vad", None))
 
     def get_context(self) -> FakeVadContext:
         return self.context
+
+    async def initialize_async(self, config: aic_sdk.ProcessorConfig) -> None:
+        self.config = config
+        self.initialized_configs.append(config)
 
     async def process_async(self, block: np.ndarray) -> None:
         self.blocks.append(block.copy())
@@ -136,7 +140,7 @@ async def collect_events(stream: agents.vad.VADStream) -> list[agents.vad.VADEve
     return [event async for event in stream]
 
 
-def test_constructs_first_native_vad_eagerly_with_sdk_id_and_optimal_config() -> None:
+def test_constructs_first_native_vad_eagerly_without_an_audio_config() -> None:
     vad = create_vad(
         vad_parameters=VADParameters(
             sensitivity=0.7,
@@ -148,9 +152,7 @@ def test_constructs_first_native_vad_eagerly_with_sdk_id_and_optimal_config() ->
     native = FakeVadAsync.instances[0]
     assert isinstance(vad, agents.vad.VAD)
     assert native_calls[:2] == [("sdk_id", 8), ("vad", None)]
-    assert native.config.sample_rate == 16000
-    assert native.config.block_size == 160
-    assert native.config.variable_block_size is False
+    assert native.config is None
     assert native.context.get_parameter(aic_sdk.VadParameter.Sensitivity) == 0.7
     assert native.context.get_parameter(aic_sdk.VadParameter.SpeechHoldDuration) == 0.4
     assert native.context.get_parameter(aic_sdk.VadParameter.MinimumSpeechDuration) == 0.1
@@ -233,6 +235,31 @@ async def test_downmixes_stereo_and_reblocks_for_the_sdk() -> None:
     )
     assert len(events) == 1
     assert events[0].frames[0].num_channels == 1
+
+
+@pytest.mark.asyncio
+async def test_uses_input_sample_rate_without_plugin_resampling() -> None:
+    vad = create_vad(model=FakeModel(sample_rate=16000, block_size=160))
+    stream = vad.stream()
+    native = FakeVadAsync.instances[0]
+    native.predictions.append((0.0, False))
+    input_samples = np.arange(480, dtype=np.int16)
+
+    stream.push_frame(make_frame(input_samples, sample_rate=48000))
+    events = await collect_events(stream)
+
+    assert len(native.initialized_configs) == 1
+    config = native.initialized_configs[0]
+    assert config.sample_rate == 48000
+    assert config.block_size == 480
+    assert config.variable_block_size is False
+    assert len(native.blocks) == 1
+    assert np.array_equal(native.blocks[0], input_samples.astype(np.float32) / 32768)
+    assert events[0].frames[0].sample_rate == 48000
+    assert np.array_equal(
+        np.frombuffer(events[0].frames[0].data, dtype=np.int16),
+        input_samples,
+    )
 
 
 @pytest.mark.asyncio

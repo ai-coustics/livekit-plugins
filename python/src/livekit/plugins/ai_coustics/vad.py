@@ -45,13 +45,8 @@ class VAD(agents.vad.VAD):
         self._sdk_model = model
         self._license_key = _license_key(license_key)
         self._model_id = model.get_id()
-        self._sample_rate = model.get_optimal_sample_rate()
-        self._block_size = model.get_optimal_block_size(self._sample_rate)
-        self._config = aic_sdk.ProcessorConfig(
-            sample_rate=self._sample_rate,
-            block_size=self._block_size,
-            variable_block_size=False,
-        )
+        model_sample_rate = model.get_optimal_sample_rate()
+        model_block_size = model.get_optimal_block_size(model_sample_rate)
         self._prefix_padding_duration = prefix_padding_duration
         self._max_buffered_speech = max_buffered_speech
         self._parameters = VADParameters()
@@ -59,7 +54,7 @@ class VAD(agents.vad.VAD):
 
         super().__init__(
             capabilities=agents.vad.VADCapabilities(
-                update_interval=self._block_size / self._sample_rate
+                update_interval=model_block_size / model_sample_rate
             )
         )
 
@@ -103,8 +98,7 @@ class VAD(agents.vad.VAD):
             self,
             native_vad=native_vad,
             context=context,
-            sample_rate=self._sample_rate,
-            block_size=self._block_size,
+            model=self._sdk_model,
             prefix_padding_duration=self._prefix_padding_duration,
             max_buffered_speech=self._max_buffered_speech,
         )
@@ -148,7 +142,6 @@ class VAD(agents.vad.VAD):
             native_vad = aic_sdk.VadAsync(
                 self._sdk_model,
                 self._license_key,
-                self._config,
             )
         except Exception as error:
             raise RuntimeError(f"Failed to create ai-coustics VAD: {error}") from error
@@ -176,15 +169,13 @@ class VADStream(agents.vad.VADStream):
         *,
         native_vad: aic_sdk.VadAsync,
         context: aic_sdk.VadContext,
-        sample_rate: int,
-        block_size: int,
+        model: aic_sdk.Model,
         prefix_padding_duration: float,
         max_buffered_speech: float,
     ) -> None:
         self._native_vad: aic_sdk.VadAsync | None = native_vad
         self._context: aic_sdk.VadContext | None = context
-        self._sample_rate = sample_rate
-        self._block_size = block_size
+        self._model = model
         self._prefix_padding_duration = prefix_padding_duration
         self._max_buffered_speech = max_buffered_speech
         self._last_slow_warning = 0.0
@@ -217,7 +208,8 @@ class VADStream(agents.vad.VADStream):
         assert native_vad is not None and context is not None
 
         input_sample_rate = 0
-        resampler: rtc.AudioResampler | None = None
+        inference_block_size = 0
+        configured_format: tuple[int, int] | None = None
         inference_buffer = bytearray()
 
         prefix_frames: deque[rtc.AudioFrame] = deque()
@@ -235,7 +227,7 @@ class VADStream(agents.vad.VADStream):
         timestamp = 0.0
 
         def reset_state() -> None:
-            nonlocal input_sample_rate, resampler
+            nonlocal input_sample_rate, inference_block_size
             nonlocal prefix_samples, speech_samples, speech_buffer_full
             nonlocal speaking, speech_duration, silence_duration
             nonlocal raw_speech_duration, raw_silence_duration
@@ -243,7 +235,7 @@ class VADStream(agents.vad.VADStream):
 
             context.reset()
             input_sample_rate = 0
-            resampler = None
+            inference_block_size = 0
             inference_buffer.clear()
             prefix_frames.clear()
             prefix_samples = 0
@@ -315,25 +307,25 @@ class VADStream(agents.vad.VADStream):
 
                 if not input_sample_rate:
                     input_sample_rate = input_frame.sample_rate
-                    if input_sample_rate != self._sample_rate:
-                        resampler = rtc.AudioResampler(
-                            input_rate=input_sample_rate,
-                            output_rate=self._sample_rate,
-                            num_channels=1,
-                            quality=rtc.AudioResamplerQuality.QUICK,
+                    inference_block_size = self._model.get_optimal_block_size(input_sample_rate)
+                    stream_format = (input_sample_rate, inference_block_size)
+                    if configured_format != stream_format:
+                        await native_vad.initialize_async(
+                            aic_sdk.ProcessorConfig(
+                                sample_rate=input_sample_rate,
+                                block_size=inference_block_size,
+                                variable_block_size=False,
+                            )
                         )
+                        configured_format = stream_format
                 elif input_frame.sample_rate != input_sample_rate:
                     logger.error("a frame with another sample rate was already pushed")
                     continue
 
                 mono_frame = to_mono(input_frame)
-                inference_frames = (
-                    resampler.push(mono_frame) if resampler is not None else [mono_frame]
-                )
-                for inference_frame in inference_frames:
-                    inference_buffer.extend(inference_frame.data.cast("b"))
+                inference_buffer.extend(mono_frame.data.cast("b"))
 
-                block_bytes = self._block_size * np.dtype(np.int16).itemsize
+                block_bytes = inference_block_size * np.dtype(np.int16).itemsize
                 while len(inference_buffer) >= block_bytes:
                     pcm = bytes(inference_buffer[:block_bytes])
                     del inference_buffer[:block_bytes]
@@ -345,8 +337,8 @@ class VADStream(agents.vad.VADStream):
 
                     probability = context.raw_vad_probability()
                     detected = context.is_speech_detected()
-                    block_duration = self._block_size / self._sample_rate
-                    current_sample += self._block_size
+                    block_duration = inference_block_size / input_sample_rate
+                    current_sample += inference_block_size
                     timestamp += block_duration
 
                     sensitivity = context.get_parameter(aic_sdk.VadParameter.Sensitivity)
@@ -364,12 +356,13 @@ class VADStream(agents.vad.VADStream):
 
                     inference_audio = rtc.AudioFrame(
                         data=pcm,
-                        sample_rate=self._sample_rate,
+                        sample_rate=input_sample_rate,
                         num_channels=1,
-                        samples_per_channel=self._block_size,
+                        samples_per_channel=inference_block_size,
                     )
-                    # Buffer the same model-rate blocks used for inference. This keeps speech event
-                    # boundaries exact even when input frames are large or require resampling.
+                    # The SDK handles model-rate conversion internally. Keep inference and event
+                    # audio at the incoming sample rate so downstream consumers receive the
+                    # original mono PCM rather than a plugin-resampled copy.
                     update_prefix_buffer(inference_audio)
                     if speaking:
                         append_speech_frame(inference_audio)

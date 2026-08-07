@@ -23,11 +23,11 @@ across the original channel count. This preserves the LiveKit frame geometry and
 Processing errors are logged and the original LiveKit frame is returned. This fail-open behavior
 keeps room audio flowing if the SDK rejects a frame or encounters a runtime error.
 
-The Python `VAD` creates one `aic_sdk.VadAsync` per LiveKit `VADStream`. Streams downmix and
-resample input to the dedicated VAD model's optimal format, emit LiveKit inference and speech
-transition events from SDK predictions, reset all native and buffered state on `flush()`, and
-terminate their SDK telemetry session when closed. VAD support is intentionally Python-only until
-`@ai-coustics/aic-sdk` 0.22 exposes the standalone VAD API.
+The Python `VAD` creates one `aic_sdk.VadAsync` per LiveKit `VADStream`. Streams downmix input and
+reblock it at its original sample rate; the SDK performs any model-rate conversion internally.
+They emit LiveKit inference and speech transition events from SDK predictions, reset all native
+and buffered state on `flush()`, and terminate their SDK telemetry session when closed. VAD support
+is intentionally Python-only until `@ai-coustics/aic-sdk` 0.22 exposes the standalone VAD API.
 
 ## Setup
 

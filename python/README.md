@@ -38,7 +38,8 @@ accepts an `rtc.FrameProcessor[rtc.AudioFrame]`.
 
 Pass `vad` to `AgentSession(vad=vad, ...)`. VAD requires a dedicated VAD model; enhancement models
 cannot be reused for it. Each LiveKit VAD stream owns an independent SDK VAD session. Incoming
-audio is downmixed to mono, resampled and reblocked to the model's optimal format, and processed
+audio is downmixed to mono and reblocked at its original sample rate. The SDK handles any model-rate
+conversion internally, while event audio remains at the LiveKit input rate. Processing runs
 asynchronously outside the agent event loop.
 
 The underlying aic-sdk 3 Processor accepts mono audio. Multichannel LiveKit frames are downmixed
