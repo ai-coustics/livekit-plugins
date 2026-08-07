@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const sdk = vi.hoisted(() => {
   const instances: FakeProcessor[] = [];
+  const nativeCalls: Array<[string, number?]> = [];
 
   class FakeContext {
     parameters: Array<[number, number]> = [];
@@ -12,7 +13,7 @@ const sdk = vi.hoisted(() => {
       this.parameters.push([parameter, value]);
     }
 
-    getOutputDelay(): number {
+    getAudioDelay(): number {
       return 42;
     }
 
@@ -33,7 +34,7 @@ const sdk = vi.hoisted(() => {
       return 16000;
     }
 
-    getOptimalNumFrames(): number {
+    getOptimalBlockSize(): number {
       return 2;
     }
 
@@ -51,38 +52,51 @@ const sdk = vi.hoisted(() => {
   class FakeProcessor {
     static constructorError: Error | null = null;
     readonly context = new FakeContext();
-    readonly initializations: Array<[number, number, number, boolean]> = [];
+    readonly initializations: Array<[number, number, boolean]> = [];
     readonly blocks: number[][] = [];
     error: Error | null = null;
+    terminateCalls = 0;
 
     constructor() {
       if (FakeProcessor.constructorError) {
         throw FakeProcessor.constructorError;
       }
       instances.push(this);
+      nativeCalls.push(["processor"]);
     }
 
-    getProcessorContext(): FakeContext {
+    getContext(): FakeContext {
       return this.context;
     }
 
-    initialize(...config: [number, number, number, boolean]): void {
+    initialize(...config: [number, number, boolean]): void {
       this.initializations.push(config);
     }
 
-    processInterleaved(block: Float32Array): void {
+    process(block: Float32Array): void {
       if (this.error) throw this.error;
       this.blocks.push(Array.from(block));
     }
+
+    terminateSession(): void {
+      this.terminateCalls += 1;
+    }
   }
 
-  return { FakeModel, FakeProcessor, instances };
+  return { FakeModel, FakeProcessor, instances, nativeCalls };
 });
 
 vi.mock("@ai-coustics/aic-sdk", () => ({
   Model: sdk.FakeModel,
   Processor: sdk.FakeProcessor,
   ProcessorParameter: { Bypass: 0, EnhancementLevel: 1 },
+  Vad: class {},
+  VadParameter: {
+    SpeechHoldDuration: 2,
+    Sensitivity: 3,
+    MinimumSpeechDuration: 4,
+  },
+  _setSdkId: (id: number) => sdk.nativeCalls.push(["sdk_id", id]),
 }));
 
 import {
@@ -98,6 +112,7 @@ describe("Processor", () => {
     sdk.FakeModel.fromFileCalls.length = 0;
     sdk.FakeModel.downloadCalls.length = 0;
     sdk.FakeProcessor.constructorError = null;
+    sdk.nativeCalls.length = 0;
   });
 
   it("constructs without a probe frame and processes one complete LiveKit frame", () => {
@@ -110,15 +125,19 @@ describe("Processor", () => {
     expect(processor.initializations).toEqual([]);
     expect(processor.blocks).toEqual([]);
     expect(processor.context.resetCount).toBe(0);
+    expect(sdk.nativeCalls.slice(0, 2)).toEqual([
+      ["sdk_id", 9],
+      ["processor"],
+    ]);
 
     const input = new Int16Array([1000, -1000, 2000, -2000, 3000, -3000]);
     const userdata = { source: "test" };
     const output = enhancer.process(new AudioFrame(input, 48000, 2, 3, userdata));
 
-    expect(Array.from(output.data)).toEqual(Array.from(input));
+    expect(Array.from(output.data)).toEqual([0, 0, 0, 0, 0, 0]);
     expect(output.userdata).toBe(userdata);
-    expect(processor.initializations.at(-1)).toEqual([48000, 2, 3, false]);
-    expect(processor.blocks.at(-1)!.length).toBe(6);
+    expect(processor.initializations.at(-1)).toEqual([48000, 3, false]);
+    expect(processor.blocks.at(-1)).toEqual([0, 0, 0]);
     expect(processor.context.parameters.filter(([key]) => key === 1)).toEqual([
       [1, 0.75],
     ]);
@@ -155,9 +174,9 @@ describe("Processor", () => {
     enhancer.process(new AudioFrame(new Int16Array(2400), 48000, 1, 2400));
 
     expect(processor.initializations).toEqual([
-      [16000, 1, 800, false],
-      [16000, 1, 160, false],
-      [48000, 1, 2400, false],
+      [16000, 800, false],
+      [16000, 160, false],
+      [48000, 2400, false],
     ]);
   });
 
@@ -213,6 +232,7 @@ describe("Processor", () => {
     expect(enhancer.process(frame)).toBe(frame);
     expect(errorSpy).toHaveBeenCalledTimes(1);
     enhancer.close();
+    expect(processor.terminateCalls).toBe(1);
     expect(enhancer.process(frame)).toBe(frame);
     errorSpy.mockRestore();
   });

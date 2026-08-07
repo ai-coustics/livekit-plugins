@@ -21,6 +21,7 @@ LIVEKIT_URL = os.getenv("LIVEKIT_URL", "ws://127.0.0.1:7880")
 LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY", "devkey")
 LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET", "secret")
 MODEL_ID = os.getenv("AIC_INTEGRATION_MODEL_ID", "quail-vf-2.2-s-16khz")
+VAD_MODEL_ID = os.getenv("AIC_INTEGRATION_VAD_MODEL_ID", "vad-2.1-xxs-16khz")
 MODEL_DIR = Path(os.getenv("AIC_INTEGRATION_MODEL_DIR", "~/.cache/aic-sdk/models")).expanduser()
 
 INPUT_SAMPLE_RATE = 16_000
@@ -58,6 +59,12 @@ class ObservedProcessor(ai_coustics.Processor):
 def model() -> ai_coustics.Model:
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     return ai_coustics.Model.from_file(ai_coustics.Model.download(MODEL_ID, MODEL_DIR))
+
+
+@pytest.fixture(scope="module")
+def vad_model() -> ai_coustics.Model:
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    return ai_coustics.Model.from_file(ai_coustics.Model.download(VAD_MODEL_ID, MODEL_DIR))
 
 
 def _token(*, identity: str, room_name: str, agent_participant: bool = False) -> str:
@@ -117,15 +124,19 @@ async def _publish_test_signal(source: rtc.AudioSource, *, until: float) -> None
 
 @pytest.mark.skipif(not LICENSE, reason="AIC_SDK_LICENSE is required")
 @pytest.mark.asyncio
-async def test_processor_runs_in_a_real_agent_room_after_license_grace_period(
+async def test_processor_and_vad_run_in_a_real_agent_room_after_license_grace_period(
     model: ai_coustics.Model,
+    vad_model: ai_coustics.Model,
 ) -> None:
     room_name = f"ai-coustics-e2e-{uuid.uuid4().hex[:12]}"
     agent_room = rtc.Room()
     publisher_room = rtc.Room()
     processor = ObservedProcessor(model=model)
+    detector = ai_coustics.VAD(model=vad_model)
+    vad_metrics: list[object] = []
+    detector.on("metrics_collected", vad_metrics.append)
     session = AgentSession(
-        vad=None,
+        vad=detector,
         turn_handling={"turn_detection": "manual"},
         user_away_timeout=None,
     )
@@ -175,6 +186,7 @@ async def test_processor_runs_in_a_real_agent_room_after_license_grace_period(
             processed_at >= processor.created_at + LICENSE_GRACE_PERIOD_SECONDS
             for processed_at in processor.success_times
         ), "no SDK-processed audio was observed after the license grace period"
+        assert vad_metrics, "AgentSession did not consume the ai-coustics VAD stream"
     finally:
         if session_started:
             await session.aclose()
