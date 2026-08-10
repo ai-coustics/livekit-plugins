@@ -1,6 +1,6 @@
 # ai-coustics LiveKit plugin for Python
 
-Audio enhancement and voice activity detection for LiveKit Agents, backed by the public
+Audio enhancement, voice activity detection, and audio-quality analysis for LiveKit Agents, backed by the public
 `aic-sdk` package.
 
 > This package replaces `livekit-plugins-ai-coustics`. Do not install both packages because they
@@ -55,6 +55,7 @@ from livekit.plugins import ai_coustics
 
 enhancement_path = ai_coustics.Model.download("quail-vf-2.2-l-16khz", "./models")
 vad_path = ai_coustics.Model.download("vad-2.1-xxs-16khz", "./models")
+analysis_path = ai_coustics.Model.download("tyto-l-16khz", "./models")
 ```
 
 Enhancement and VAD models are different model types. Make the returned paths available to your
@@ -63,6 +64,7 @@ worker, then load each model once per worker process:
 ```python
 enhancement_model = ai_coustics.Model.from_file(enhancement_path)
 vad_model = ai_coustics.Model.from_file(vad_path)
+analysis_model = ai_coustics.Model.from_file(analysis_path)
 ```
 
 ## Usage
@@ -90,6 +92,43 @@ await session.start(
 ```
 
 Use either component independently by omitting the other from the configuration.
+
+### Audio-quality analysis
+
+Create an `Analyzer` inside an async function and pass its collector as the room's frame processor:
+
+```python
+analyzer = ai_coustics.Analyzer(
+    model=analysis_model,
+    analysis_interval=5.0,  # seconds; 5 is the default
+)
+
+
+@analyzer.on("analysis_result")
+def on_analysis(event: ai_coustics.AnalysisEvent) -> None:
+    print(event.result.risk_score)
+
+
+await session.start(
+    # ... agent, room
+    room_options=room_io.RoomOptions(
+        audio_input=room_io.AudioInputOptions(
+            noise_cancellation=analyzer.collector,
+        ),
+    ),
+)
+```
+
+`Collector` passes audio through unchanged while `Analyzer` emits an `analysis_result` event at the
+configured interval. Results are not logged by the plugin; log or handle them in the callback. The
+analyzer also records OpenTelemetry metrics through the process-wide `MeterProvider`. Set
+`enable_metrics=False` to disable them.
+
+RoomIO closes the analyzer with its collector. If RoomIO does not own the collector, call
+`await analyzer.aclose()` yourself.
+
+This is a temporary integration through LiveKit's single `noise_cancellation` slot. Consequently,
+the collector cannot be installed alongside `Processor` in the same room.
 
 ## Configuration
 

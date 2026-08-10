@@ -46,6 +46,20 @@ The wrapper overrides the model-specific SDK duration defaults with LiveKit-comp
 50 ms minimum speech and a 250 ms speech hold. The latter satisfies the minimum silence required
 by LiveKit's streaming turn detector. Explicit `VADParameters` values still take precedence.
 
+Each `Analyzer` owns one SDK collector/analyzer pair. Its public `collector` is a transparent
+`FrameProcessor` installed in RoomIO's `noise_cancellation` slot: it lazily initializes from the
+first frame, downmixes PCM16 input to mono float32, buffers it, and returns the original frame
+unchanged. Stream boundaries reset the analyzer. Closing either the analyzer or its collector
+stops scheduling and terminates the SDK telemetry session.
+
+Python schedules inference with an asyncio task and runs each blocking `analyze_buffered()` call
+through `asyncio.to_thread()`. Shutdown waits for an active inference before terminating the SDK
+session. Node uses a timer around the SDK's synchronous `analyzeBuffered()` API. Both runtimes emit
+a plugin-level result event after every successful scheduled call without logging the result by
+default. They also record aggregate score, inference-duration, and success/error count instruments
+through the process-wide OpenTelemetry metrics API; operational errors remain logged and fail-open
+for the room audio path.
+
 ## Future work
 
 ### LiveKit `download-files` integration
@@ -102,7 +116,7 @@ Processor-only and VAD-only configurations have the intended SDK topology; using
 standard RoomIO path is functional, but the VAD operates on Processor output and its event timing
 cannot compensate for the Processor's independent audio delay.
 
-### Streaming Analyzer integration
+### First-class streaming Analyzer integration
 
 The aic-sdk streaming analysis API is split into a `Collector` and an `Analyzer`. The collector
 accepts mono float32 audio synchronously and is safe to feed from the audio path, while
@@ -111,12 +125,11 @@ from that path. The result contains risk, speaker reverb, speaker loudness, inte
 media speech, noise, and packet-loss scores. `FileAnalyzer` is intended for complete in-memory
 signals and is not appropriate for a live agent stream.
 
-An Analyzer is a side-channel consumer rather than an audio transform. Implementing it as a
-pass-through `FrameProcessor` would let it collect early audio, but it would occupy RoomIO's single
-`noise_cancellation` slot and could not run beside the enhancement `Processor`. An `AudioInput`
-wrapper can coexist with enhancement today, but only observes the already-processed AgentSession
-input and has awkward setup and ownership when RoomIO creates the default input. Either approach
-is useful for a prototype, but neither is a suitable public integration.
+An Analyzer is a side-channel consumer rather than an audio transform. The current workaround is
+a pass-through `FrameProcessor`, which collects early audio but occupies RoomIO's single
+`noise_cancellation` slot and cannot run beside the enhancement `Processor`. An `AudioInput`
+wrapper could coexist with enhancement, but would only observe the already-processed AgentSession
+input and has awkward setup and ownership when RoomIO creates the default input.
 
 The preferred upstream solution is a generic audio observer or tap interface in LiveKit Agents.
 RoomIO or AgentSession should fan frames out to registered observers without allowing observer
@@ -133,22 +146,27 @@ Supporting a truly raw tap may also require an RTC `AudioStream` hook or a branc
 graph because the current RTC frame processor runs before Agents receives the frame. This work can
 therefore share the upstream solution proposed for Processor/VAD raw-audio fan-out.
 
-The plugin-side API should create one SDK collector/analyzer pair per LiveKit observer stream and
-expose immutable analysis events. Events should include the seven scores, model and stream
-metadata, result time and accumulated audio position, inference duration, and a sequence number.
+Once that upstream interface exists, the plugin should create one SDK collector/analyzer pair per
+LiveKit observer stream. The current plugin-level `analysis_result` / `analysisResult` events can
+then be attached to that observer without changing their payload shape. Events include the seven
+scores, model and stream metadata, result time, inference duration, and a sequence number; the
+upstream observer could additionally provide an authoritative accumulated audio position.
 Collection requires only PCM16-to-float32 conversion and mono downmixing; the SDK handles sample
 rate adaptation after the collector is initialized with the input rate. Analysis should be
 scheduled from accumulated audio duration, allow only one inference at a time, and replace stale
 pending work instead of building an unbounded queue. Track and format discontinuities must reset
 the SDK state, and close must terminate the analyzer telemetry session.
 
-Analysis results should use a dedicated `audio_analysis` event instead of being forced into
-LiveKit's deprecated `metrics_collected` event. Inference duration, errors, and backlog remain
-operational diagnostics and may later map to first-class analyzer metrics. If future analysis
+As a further upstream option, `AgentSession` could forward observer results through a dedicated
+`audio_analysis` event, with a new framework-owned event type and reporting hook. That would make
+analysis discoverable alongside other session observability without forcing it into LiveKit's
+deprecated `metrics_collected` event or its closed `AgentMetrics` union. LiveKit could also define
+stable analyzer metric names and Cloud dashboard treatment; until then the plugin-owned
+OpenTelemetry instruments are intentionally aggregate and backend-agnostic. If future analysis
 models use different context windows, aic-sdk should expose the model's analysis-window duration
 so the plugin does not have to hard-code the current five-second window.
 
-Python can run `analyze_buffered()` through `asyncio.to_thread()` because the binding releases the
+Python runs `analyze_buffered()` through `asyncio.to_thread()` because the binding releases the
 GIL during inference. Node aic-sdk 0.22 exposes only synchronous `analyzeBuffered()` and
 `terminateSession()`, so calling them from a timer would still block the agent's JavaScript event
 loop. A production Node integration first needs native asynchronous APIs such as
@@ -226,6 +244,7 @@ Run the Python suite and checks with:
 
 ```bash
 cd python
+uv run pytest tests/test_analyzer.py -q
 uv run pytest tests/test_processor.py -q
 uv run pytest tests/test_vad.py -q
 uv run pytest tests/test_integration.py -q

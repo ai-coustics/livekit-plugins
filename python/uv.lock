@@ -20,6 +20,7 @@ dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "opentelemetry-api" },
 ]
 
 [package.dev-dependencies]
@@ -35,6 +36,7 @@ requires-dist = [
     { name = "aic-sdk", specifier = ">=3.0.0,<4" },
     { name = "livekit-agents", specifier = ">=1.4.2,<2" },
     { name = "numpy", specifier = ">=2.0.2" },
+    { name = "opentelemetry-api", specifier = ">=1.14,<2" },
 ]
 
 [package.metadata.requires-dev]
