@@ -95,7 +95,7 @@ Use either component independently by omitting the other from the configuration.
 
 ### Audio-quality analysis
 
-Create an `Analyzer` and subscribe to its results:
+Create an `Analyzer`, install its collector in RoomIO's audio path, and subscribe to its results:
 
 ```python
 analyzer = ai_coustics.Analyzer(
@@ -107,7 +107,20 @@ analyzer = ai_coustics.Analyzer(
 @analyzer.on("analysis_result")
 def on_analysis(event: ai_coustics.AnalysisEvent) -> None:
     print(event.result.risk_score)
+
+
+await session.start(
+    # ... agent, room
+    room_options=room_io.RoomOptions(
+        audio_input=room_io.AudioInputOptions(
+            noise_cancellation=analyzer.collector,
+        ),
+    ),
+)
 ```
+
+The `Analyzer` receives audio through `analyzer.collector`; constructing the analyzer without
+installing its collector does not feed it any room audio.
 
 Results are not logged by the plugin; log or handle them in the callback.
 

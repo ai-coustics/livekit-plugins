@@ -95,7 +95,7 @@ Use either component independently by omitting the other from the configuration.
 
 ### Audio-quality analysis
 
-Create an `Analyzer` and subscribe to its results:
+Create an `Analyzer`, install its collector in RoomIO's audio path, and subscribe to its results:
 
 ```ts
 import { Analyzer } from "@ai-coustics/livekit-plugin";
@@ -108,7 +108,15 @@ const analyzer = new Analyzer({
 analyzer.on("analysisResult", (event) => {
   console.log(event.result.riskScore);
 });
+
+await session.start({
+  // ... agent, room
+  inputOptions: { noiseCancellation: analyzer.collector },
+});
 ```
+
+The `Analyzer` receives audio through `analyzer.collector`; constructing the analyzer without
+installing its collector does not feed it any room audio.
 
 Results are not logged by the plugin; log or handle them in the callback.
 
