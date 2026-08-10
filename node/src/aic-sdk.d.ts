@@ -7,6 +7,37 @@ declare module "@ai-coustics/aic-sdk" {
     getOptimalBlockSize(sampleRate: number): number;
   }
 
+  export interface AnalysisResult {
+    riskScore: number;
+    speakerReverb: number;
+    speakerLoudness: number;
+    interferingSpeech: number;
+    mediaSpeech: number;
+    noise: number;
+    packetLoss: number;
+  }
+
+  export class Collector {
+    initialize(
+      sampleRate: number,
+      blockSize: number,
+      variableBlockSize?: boolean,
+    ): void;
+    buffer(samples: Float32Array): void;
+  }
+
+  export class Analyzer {
+    reset(): void;
+    analyzeBuffered(): AnalysisResult;
+    terminateSession(): void;
+    updateBearerToken(token: string): void;
+  }
+
+  export function analyzerPair(
+    model: Model,
+    licenseKey: string,
+  ): { collector: Collector; analyzer: Analyzer };
+
   export const ProcessorParameter: {
     readonly Bypass: number;
     readonly EnhancementLevel: number;

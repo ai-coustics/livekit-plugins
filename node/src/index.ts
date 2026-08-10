@@ -1,4 +1,9 @@
 export {
+  Analyzer,
+  type AnalyzerOptions,
+  Collector,
+} from "./analyzer.js";
+export {
   Model,
   ProcessorParameter,
 } from "./sdk.js";

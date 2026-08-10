@@ -1,6 +1,6 @@
 # ai-coustics LiveKit plugin for Node.js
 
-Audio enhancement and voice activity detection for LiveKit Agents, backed by the public
+Audio enhancement, voice activity detection, and audio-quality analysis for LiveKit Agents, backed by the public
 `@ai-coustics/aic-sdk` package.
 
 > This package replaces `@livekit/plugins-ai-coustics`. Uninstall the official package before
@@ -57,6 +57,7 @@ import { Model } from "@ai-coustics/livekit-plugin";
 
 const enhancementPath = Model.download("quail-vf-2.2-l-16khz", "./models");
 const vadPath = Model.download("vad-2.1-xxs-16khz", "./models");
+const analysisPath = Model.download("tyto-l-16khz", "./models");
 ```
 
 Enhancement and VAD models are different model types. Make the returned paths available to your
@@ -65,6 +66,7 @@ worker, then load each model once per worker process:
 ```ts
 const enhancementModel = Model.fromFile(enhancementPath);
 const vadModel = Model.fromFile(vadPath);
+const analysisModel = Model.fromFile(analysisPath);
 ```
 
 ## Usage
@@ -90,6 +92,34 @@ await session.start({
 ```
 
 Use either component independently by omitting the other from the configuration.
+
+### Audio-quality analysis
+
+Create an `Analyzer` and pass its collector as the room's frame processor:
+
+```ts
+import { Analyzer } from "@ai-coustics/livekit-plugin";
+
+const analyzer = new Analyzer({
+  model: analysisModel,
+  analysisInterval: 5, // seconds; 5 is the default
+});
+
+await session.start({
+  // ... agent, room
+  inputOptions: { noiseCancellation: analyzer.collector },
+});
+```
+
+`Collector` passes every frame through unchanged while buffering a mono copy for the SDK. The
+`Analyzer` calls `analyzeBuffered()` at the configured interval and currently logs all seven fields
+of every result. RoomIO closes the collector and its analyzer together; call `analyzer.close()`
+yourself if the collector is not owned by RoomIO.
+
+This is a temporary integration through LiveKit's single `noiseCancellation` slot. Consequently,
+the analyzer collector cannot be installed there alongside `Processor`. A future LiveKit audio-tap
+API should allow analysis to run as a true side channel. The current Node SDK analyzer API is
+synchronous, so each scheduled inference briefly occupies the agent's JavaScript thread.
 
 ## Configuration
 

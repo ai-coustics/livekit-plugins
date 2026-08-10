@@ -1,4 +1,5 @@
 import {
+  analyzerPair as nativeAnalyzerPair,
   Model as NativeModel,
   Processor as NativeProcessor,
   ProcessorParameter as NativeProcessorParameter,
@@ -12,6 +13,32 @@ export interface Model {
   getId(): string;
   getOptimalSampleRate(): number;
   getOptimalBlockSize(sampleRate: number): number;
+}
+
+export interface AnalysisResult {
+  riskScore: number;
+  speakerReverb: number;
+  speakerLoudness: number;
+  interferingSpeech: number;
+  mediaSpeech: number;
+  noise: number;
+  packetLoss: number;
+}
+
+export interface CollectorInstance {
+  initialize(
+    sampleRate: number,
+    blockSize: number,
+    variableBlockSize?: boolean,
+  ): void;
+  buffer(samples: Float32Array): void;
+}
+
+export interface AnalyzerInstance {
+  reset(): void;
+  analyzeBuffered(): AnalysisResult;
+  terminateSession(): void;
+  updateBearerToken(token: string): void;
 }
 
 interface ModelConstructor {
@@ -84,4 +111,10 @@ interface VadConstructor {
 export const Model: ModelConstructor = NativeModel;
 export const Processor: ProcessorConstructor = NativeProcessor;
 export const Vad: VadConstructor = NativeVad;
+export function analyzerPair(
+  model: Model,
+  licenseKey: string,
+): { collector: CollectorInstance; analyzer: AnalyzerInstance } {
+  return nativeAnalyzerPair(model, licenseKey);
+}
 export const setSdkId: (id: number) => void = nativeSetSdkId;

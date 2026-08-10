@@ -1,6 +1,6 @@
 # ai-coustics LiveKit plugin for Python
 
-Audio enhancement and voice activity detection for LiveKit Agents, backed by the public
+Audio enhancement, voice activity detection, and audio-quality analysis for LiveKit Agents, backed by the public
 `aic-sdk` package.
 
 > This package replaces `livekit-plugins-ai-coustics`. Do not install both packages because they
@@ -55,6 +55,7 @@ from livekit.plugins import ai_coustics
 
 enhancement_path = ai_coustics.Model.download("quail-vf-2.2-l-16khz", "./models")
 vad_path = ai_coustics.Model.download("vad-2.1-xxs-16khz", "./models")
+analysis_path = ai_coustics.Model.download("tyto-l-16khz", "./models")
 ```
 
 Enhancement and VAD models are different model types. Make the returned paths available to your
@@ -63,6 +64,7 @@ worker, then load each model once per worker process:
 ```python
 enhancement_model = ai_coustics.Model.from_file(enhancement_path)
 vad_model = ai_coustics.Model.from_file(vad_path)
+analysis_model = ai_coustics.Model.from_file(analysis_path)
 ```
 
 ## Usage
@@ -90,6 +92,35 @@ await session.start(
 ```
 
 Use either component independently by omitting the other from the configuration.
+
+### Audio-quality analysis
+
+Create an `Analyzer` inside an async function and pass its collector as the room's frame processor:
+
+```python
+analyzer = ai_coustics.Analyzer(
+    model=analysis_model,
+    analysis_interval=5.0,  # seconds; 5 is the default
+)
+
+await session.start(
+    # ... agent, room
+    room_options=room_io.RoomOptions(
+        audio_input=room_io.AudioInputOptions(
+            noise_cancellation=analyzer.collector,
+        ),
+    ),
+)
+```
+
+`Collector` passes every frame through unchanged while buffering a mono copy for the SDK. The
+`Analyzer` runs `analyze_buffered()` on a worker thread at the configured interval and currently
+logs all seven fields of every result. RoomIO closes the collector and its analyzer together; call
+`await analyzer.aclose()` yourself if the collector is not owned by RoomIO.
+
+This is a temporary integration through LiveKit's single `noise_cancellation` slot. Consequently,
+the analyzer collector cannot be installed there alongside `Processor`. A future LiveKit audio-tap
+API should allow analysis to run as a true side channel.
 
 ## Configuration
 
