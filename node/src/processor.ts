@@ -1,4 +1,3 @@
-import { log } from "@livekit/agents";
 import {
   AudioFrame,
   FrameProcessor,
@@ -11,6 +10,7 @@ import {
   type ProcessorContext as AicProcessorContext,
   setSdkId,
 } from "./sdk.js";
+import { type LogLevel, writeLog as writePluginLog } from "./log.js";
 import { ProcessorContext } from "./processor_context.js";
 
 const SLOW_WARNING_INTERVAL_MS = 10_000;
@@ -18,8 +18,6 @@ const SLOW_BACKLOG_THRESHOLD_MS = 200;
 const ERROR_REPORT_INTERVAL_MS = 10_000;
 
 type ProcessingStage = "initialize" | "validate_frame" | "process" | "convert_output";
-type LogLevel = "debug" | "info" | "warn" | "error";
-
 export interface ProcessorOptions {
   /** Loaded ai-coustics SDK Model. */
   model: Model;
@@ -112,7 +110,7 @@ export class Processor extends FrameProcessor<AudioFrame> {
     this.filteringEnabled = enabled;
     this.writeLog(
       "debug",
-      `ai-coustics Processor ${enabled ? "enabled" : "disabled"}`,
+      enabled ? "enabled" : "disabled",
     );
   }
 
@@ -139,7 +137,7 @@ export class Processor extends FrameProcessor<AudioFrame> {
     this.streamInfo = { ...info };
     this.writeLog(
       "debug",
-      `ai-coustics Processor stream ${changed ? "changed; native context reset" : "attached"}`,
+      `stream ${changed ? "changed; native context reset" : "attached"}`,
     );
   }
 
@@ -148,7 +146,7 @@ export class Processor extends FrameProcessor<AudioFrame> {
     const fields = this.diagnosticFields();
     this.context?.reset();
     this.streamInfo = null;
-    this.writeLog("debug", "ai-coustics Processor stream detached", fields, true);
+    this.writeLog("debug", "stream detached", fields, true);
   }
 
   process(frame: AudioFrame): AudioFrame {
@@ -183,7 +181,7 @@ export class Processor extends FrameProcessor<AudioFrame> {
         this.audioDelayMs = (audioDelaySamples / frame.sampleRate) * 1000;
         this.writeLog(
           "info",
-          `ai-coustics Processor ${this.initializationCount === 1 ? "initialized" : "reconfigured"}`,
+          this.initializationCount === 1 ? "initialized" : "reconfigured",
           {
             initializationDurationMs,
             initializationCount: this.initializationCount,
@@ -282,7 +280,7 @@ export class Processor extends FrameProcessor<AudioFrame> {
     } catch (error) {
       this.writeLog(
         "error",
-        "Failed to terminate ai-coustics Processor session",
+        "session termination failed",
         {},
         false,
         error,
@@ -315,8 +313,8 @@ export class Processor extends FrameProcessor<AudioFrame> {
     this.writeLog(
       this.frameCount > 0 ? "info" : "debug",
       this.frameCount > 0
-        ? "ai-coustics Processor closed"
-        : "ai-coustics Processor closed without processing audio",
+        ? "closed"
+        : "closed without processing audio",
       summary,
       true,
     );
@@ -368,7 +366,7 @@ export class Processor extends FrameProcessor<AudioFrame> {
     ) {
       this.slowWarningActive = true;
       this.lastSlowWarning = completed;
-      this.writeLog("warn", "ai-coustics Processor is falling behind realtime", {
+      this.writeLog("warn", "falling behind realtime", {
         processingDurationMs,
         sdkProcessingDurationMs,
         frameDurationMs,
@@ -409,7 +407,7 @@ export class Processor extends FrameProcessor<AudioFrame> {
     this.lastErrorReport = completed;
     this.writeLog(
       "error",
-      "ai-coustics Processor failed; passing audio through",
+      "failed; passing audio through",
       {
         processingStage: stage,
         errorType,
@@ -435,7 +433,7 @@ export class Processor extends FrameProcessor<AudioFrame> {
     if (this.failureEpisodeReported) {
       const [lastFailureStage, lastErrorType, lastErrorMessage] =
         this.activeErrorSignature?.split("\u0000") ?? [];
-      this.writeLog("info", "ai-coustics Processor recovered", {
+      this.writeLog("info", "recovered", {
         recoveredFailureCount: this.consecutiveFailures,
         failureDurationMs:
           completed - (this.failureStarted === null ? completed : this.failureStarted),
@@ -479,26 +477,6 @@ export class Processor extends FrameProcessor<AudioFrame> {
     const diagnostics = fieldsAreComplete
       ? fields
       : this.diagnosticFields(fields);
-    const payload = error === undefined ? diagnostics : { ...diagnostics, error };
-    try {
-      log()[level](payload, message);
-      return;
-    } catch (loggingError) {
-      const loggerIsUninitialized =
-        loggingError instanceof TypeError &&
-        loggingError.message.includes("logger not initialized");
-      if (!loggerIsUninitialized) {
-        console.error("Failed to write ai-coustics diagnostic through LiveKit", {
-          error: loggingError,
-        });
-      }
-    }
-
-    // Processor instances can be constructed before LiveKit configures its global logger. Keep
-    // operational diagnostics visible in that case, but do not turn normally-hidden debug events
-    // into unsolicited console output.
-    if (level === "error") console.error(message, payload);
-    else if (level === "warn") console.warn(message, payload);
-    else if (level === "info") console.info(message, payload);
+    writePluginLog(level, "processor", message, diagnostics, error);
   }
 }

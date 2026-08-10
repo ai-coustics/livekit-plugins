@@ -232,7 +232,7 @@ describe("Processor", () => {
     expect(
       logging.calls.find(
         ({ level, message }) =>
-          level === "warn" && message.includes("Processor parameter rejected"),
+          level === "warn" && message.includes("Processor: parameter rejected"),
       )?.payload,
     ).toMatchObject({
       parameter: ProcessorParameter.EnhancementLevel,
@@ -340,7 +340,7 @@ describe("Processor", () => {
     expect(
       logging.calls.find(
         ({ level, message }) =>
-          level === "warn" && message.includes("Processor parameter rejected"),
+          level === "warn" && message.includes("Processor: parameter rejected"),
       )?.payload,
     ).toMatchObject({
       parameter: ProcessorParameter.EnhancementLevel,
@@ -363,7 +363,7 @@ describe("Processor", () => {
     expect(nativeContext.parameters).not.toContainEqual([1, 0.8]);
     expect(nativeContext.parameters).toContainEqual([0, 1]);
     expect(
-      logging.calls.find(({ message }) => message.includes("Processor parameter rejected"))
+      logging.calls.find(({ message }) => message.includes("Processor: parameter rejected"))
         ?.payload,
     ).toMatchObject({
       parameter: ProcessorParameter.EnhancementLevel,
@@ -430,7 +430,7 @@ describe("Processor", () => {
     processor.error = null;
     enhancer.process(frame);
     const recovery = logging.calls.find(({ message }) =>
-      message.includes("Processor recovered"),
+      message.includes("Processor: recovered"),
     );
     expect(recovery?.payload).toMatchObject({
       recoveredFailureCount: 2,
@@ -444,7 +444,7 @@ describe("Processor", () => {
     expect(processor.terminateCalls).toBe(1);
     expect(enhancer.process(frame)).toBe(frame);
     const summary = logging.calls.find(
-      ({ message }) => message === "ai-coustics Processor closed",
+      ({ message }) => message === "Processor: closed",
     );
     expect(summary?.payload).toMatchObject({
       frameCount: 3,
@@ -470,9 +470,11 @@ describe("Processor", () => {
     enhancer.process(new AudioFrame(new Int16Array(800), 16000, 1, 800));
 
     const initialized = logging.calls.find(
-      ({ message }) => message === "ai-coustics Processor initialized",
+      ({ message }) => message === "Processor: initialized",
     );
     expect(initialized?.payload).toMatchObject({
+      plugin: "ai-coustics",
+      component: "processor",
       roomName: "diagnostic-room",
       participantIdentity: "caller",
       publicationSid: "TR_first",

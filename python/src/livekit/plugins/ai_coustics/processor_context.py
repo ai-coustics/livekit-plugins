@@ -21,7 +21,7 @@ class ProcessorContext:
     def reset(self) -> None:
         self._context.reset()
         logger.debug(
-            "ai-coustics Processor reset",
+            "Processor: reset",
             extra=self._diagnostic_fields(),
         )
 
@@ -36,7 +36,7 @@ class ProcessorContext:
             self._context.set_parameter(parameter, value)
         except Exception as error:
             logger.warning(
-                "ai-coustics Processor parameter rejected; keeping the current value",
+                "Processor: parameter rejected; keeping the current value",
                 extra=self._diagnostic_fields(
                     context_operation="set_parameter",
                     parameter=str(parameter),
@@ -47,7 +47,7 @@ class ProcessorContext:
             )
             return
         logger.debug(
-            "ai-coustics Processor parameter updated",
+            "Processor: parameter updated",
             extra=self._diagnostic_fields(
                 parameter=str(parameter),
                 parameter_value=value,
@@ -65,7 +65,7 @@ class ProcessorContext:
             self._context.update_bearer_token(token)
         except Exception as error:
             logger.warning(
-                "ai-coustics Processor bearer token update failed; keeping the current token",
+                "Processor: bearer token update failed; keeping the current token",
                 extra=self._diagnostic_fields(
                     context_operation="update_bearer_token",
                     error_type=type(error).__name__,
@@ -75,6 +75,6 @@ class ProcessorContext:
             )
             raise
         logger.debug(
-            "ai-coustics Processor bearer token updated",
+            "Processor: bearer token updated",
             extra=self._diagnostic_fields(),
         )

@@ -7,6 +7,7 @@ import {
   type FrameProcessorStreamInfo,
 } from "@livekit/rtc-node";
 
+import { writeLog } from "./log.js";
 import { pcm16ToFloat32 } from "./processor.js";
 import {
   type AnalysisResult,
@@ -177,7 +178,13 @@ export class Collector extends FrameProcessor<AudioFrame> {
       collector.buffer(mono);
       this.hasBufferedAudio = true;
     } catch (error) {
-      console.error("ai-coustics Collector failed; passing audio through", error);
+      writeLog(
+        "error",
+        "collector",
+        "failed; passing audio through",
+        this.streamInfo ?? {},
+        error,
+      );
     }
 
     return frame;
@@ -189,7 +196,13 @@ export class Collector extends FrameProcessor<AudioFrame> {
     try {
       this.resetAnalyzer();
     } catch (error) {
-      console.error(`Failed to reset ai-coustics Analyzer: ${errorDetail(error)}`);
+      writeLog(
+        "error",
+        "analyzer",
+        "reset failed",
+        { errorMessage: errorDetail(error) },
+        error,
+      );
     }
   }
 
@@ -274,11 +287,23 @@ export class Analyzer extends (EventEmitter as new () => TypedEmitter<AnalyzerCa
       try {
         this.emit("analysisResult", event);
       } catch (error) {
-        console.error("Failed to emit ai-coustics analysis result event", error);
+        writeLog(
+          "error",
+          "analyzer",
+          "result event emission failed",
+          { modelName: this.modelId, sequence: this.sequence, ...(streamInfo ?? {}) },
+          error,
+        );
       }
     } catch (error) {
       this.recordMetrics(performance.now() - started, "error");
-      console.error("ai-coustics Analyzer failed to analyze buffered audio", error);
+      writeLog(
+        "error",
+        "analyzer",
+        "buffered audio analysis failed",
+        { modelName: this.modelId, ...(this.collector.currentStreamInfo ?? {}) },
+        error,
+      );
     }
   }
 
@@ -302,7 +327,13 @@ export class Analyzer extends (EventEmitter as new () => TypedEmitter<AnalyzerCa
         }
       }
     } catch (error) {
-      console.error("Failed to record ai-coustics Analyzer metrics", error);
+      writeLog(
+        "error",
+        "analyzer",
+        "metrics recording failed",
+        { modelName: this.modelId, status },
+        error,
+      );
     }
   }
 
@@ -317,7 +348,13 @@ export class Analyzer extends (EventEmitter as new () => TypedEmitter<AnalyzerCa
     try {
       analyzer.terminateSession();
     } catch (error) {
-      console.error(`Failed to terminate ai-coustics Analyzer session: ${errorDetail(error)}`);
+      writeLog(
+        "error",
+        "analyzer",
+        "session termination failed",
+        { modelName: this.modelId, errorMessage: errorDetail(error) },
+        error,
+      );
     }
   }
 }

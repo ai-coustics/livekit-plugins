@@ -8,7 +8,7 @@ import numpy as np
 
 from livekit import rtc
 
-from .log import logger
+from .log import log_fields, logger
 from .processor_context import ProcessorContext
 
 _SLOW_WARNING_INTERVAL = 10.0
@@ -109,7 +109,7 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
             self._context.reset()
         self._enabled = value
         logger.debug(
-            "ai-coustics Processor %s",
+            "Processor: %s",
             "enabled" if value else "disabled",
             extra=self._diagnostic_fields(),
         )
@@ -138,7 +138,7 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
             self._context.reset()
         self._stream_info = stream_info
         logger.debug(
-            "ai-coustics Processor stream %s",
+            "Processor: stream %s",
             "changed; native context reset" if changed else "attached",
             extra=self._diagnostic_fields(),
         )
@@ -150,7 +150,7 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
         if self._context is not None:
             self._context.reset()
         self._stream_info = {}
-        logger.debug("ai-coustics Processor stream detached", extra=fields)
+        logger.debug("Processor: stream detached", extra=fields)
 
     def _process(self, frame: rtc.AudioFrame) -> rtc.AudioFrame:
         # A disabled or closed processor is a transparent LiveKit frame processor.
@@ -186,7 +186,7 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
                 self._audio_delay_samples = audio_delay_samples
                 self._audio_delay = audio_delay_samples / frame.sample_rate
                 logger.info(
-                    "ai-coustics Processor %s",
+                    "Processor: %s",
                     "initialized" if self._initialization_count == 1 else "reconfigured",
                     extra=self._diagnostic_fields(
                         initialization_duration=initialization_duration,
@@ -300,7 +300,7 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
             self._slow_warning_active = True
             self._last_slow_warning = completed
             logger.warning(
-                "ai-coustics Processor is falling behind realtime",
+                "Processor: falling behind realtime",
                 extra=self._diagnostic_fields(
                     processing_duration=processing_duration,
                     sdk_processing_duration=sdk_processing_duration,
@@ -341,7 +341,7 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
         self._last_reported_error_signature = signature
         self._last_error_report = completed
         logger.error(
-            "ai-coustics Processor failed; passing audio through",
+            "Processor: failed; passing audio through",
             extra=self._diagnostic_fields(
                 processing_stage=stage,
                 error_type=type(error).__name__,
@@ -366,7 +366,7 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
         if self._failure_episode_reported:
             active_error = self._active_error_signature
             logger.info(
-                "ai-coustics Processor recovered",
+                "Processor: recovered",
                 extra=self._diagnostic_fields(
                     recovered_failure_count=self._consecutive_failures,
                     failure_duration=completed
@@ -383,11 +383,12 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
         self._active_error_signature = None
 
     def _diagnostic_fields(self, **fields: object) -> dict[str, object]:
-        diagnostics: dict[str, object] = {
-            "model_provider": "ai-coustics",
-            "model_name": self._model_id,
+        diagnostics: dict[str, object] = log_fields(
+            "processor",
+            model_provider="ai-coustics",
+            model_name=self._model_id,
             **self._stream_info,
-        }
+        )
         if self._format is not None:
             diagnostics.update(
                 {
@@ -411,7 +412,7 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
                 processor.terminate_session()
             except Exception as error:
                 logger.error(
-                    "Failed to terminate ai-coustics Processor session",
+                    "Processor: session termination failed",
                     extra=self._diagnostic_fields(
                         error_type=type(error).__name__, error_message=str(error)
                     ),
@@ -455,9 +456,9 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
             ),
         )
         if self._frame_count:
-            logger.info("ai-coustics Processor closed", extra=summary)
+            logger.info("Processor: closed", extra=summary)
         else:
-            logger.debug("ai-coustics Processor closed without processing audio", extra=summary)
+            logger.debug("Processor: closed without processing audio", extra=summary)
 
         self._context = None
         self._processor = None

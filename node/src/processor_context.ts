@@ -19,7 +19,7 @@ export class ProcessorContext {
 
   reset(): void {
     this.context.reset();
-    this.writeLog("debug", "ai-coustics Processor reset", {});
+    this.writeLog("debug", "reset", {});
   }
 
   setParameter(parameter: ProcessorParameter, value: number): void {
@@ -28,7 +28,7 @@ export class ProcessorContext {
     } catch (error) {
       this.writeLog(
         "warn",
-        "ai-coustics Processor parameter rejected; keeping the current value",
+        "parameter rejected; keeping the current value",
         {
           contextOperation: "setParameter",
           parameter,
@@ -42,7 +42,7 @@ export class ProcessorContext {
     }
     this.writeLog(
       "debug",
-      "ai-coustics Processor parameter updated",
+      "parameter updated",
       { parameter, parameterValue: value },
     );
   }
@@ -61,7 +61,7 @@ export class ProcessorContext {
     } catch (error) {
       this.writeLog(
         "warn",
-        "ai-coustics Processor bearer token update failed; keeping the current token",
+        "bearer token update failed; keeping the current token",
         {
           contextOperation: "updateBearerToken",
           errorType: error instanceof Error ? error.name : typeof error,
@@ -71,6 +71,6 @@ export class ProcessorContext {
       );
       throw error;
     }
-    this.writeLog("debug", "ai-coustics Processor bearer token updated", {});
+    this.writeLog("debug", "bearer token updated", {});
   }
 }

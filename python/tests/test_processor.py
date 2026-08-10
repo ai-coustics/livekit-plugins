@@ -171,10 +171,12 @@ def test_context_delegates_sdk_operations_and_logs_rejected_parameters(
     context.set_parameter(ProcessorParameter.EnhancementLevel, 1.1)
 
     warning = next(
-        record for record in caplog.records if "Processor parameter rejected" in record.message
+        record for record in caplog.records if "Processor: parameter rejected" in record.message
     )
     assert warning.parameter == "ProcessorParameter.EnhancementLevel"  # type: ignore[attr-defined]
     assert warning.error_message == "out of range"  # type: ignore[attr-defined]
+    assert warning.plugin == "ai-coustics"  # type: ignore[attr-defined]
+    assert warning.component == "processor"  # type: ignore[attr-defined]
 
 
 def test_context_getters_do_not_log(caplog: pytest.LogCaptureFixture) -> None:
@@ -286,7 +288,7 @@ def test_parameter_updates_warn_on_rejection_and_are_not_reapplied(
     assert (aic_sdk.ProcessorParameter.EnhancementLevel, 1.1) not in processor.context.parameters
     assert (aic_sdk.ProcessorParameter.Bypass, 0.0) in processor.context.parameters
     warning = next(
-        record for record in caplog.records if "Processor parameter rejected" in record.message
+        record for record in caplog.records if "Processor: parameter rejected" in record.message
     )
     assert warning.parameter == "ProcessorParameter.EnhancementLevel"  # type: ignore[attr-defined]
     assert warning.parameter_value == 1.1  # type: ignore[attr-defined]
@@ -308,7 +310,7 @@ def test_sdk_parameter_failure_warns_and_does_not_block_later_updates(
     assert (aic_sdk.ProcessorParameter.EnhancementLevel, 0.8) not in native_context.parameters
     assert (aic_sdk.ProcessorParameter.Bypass, 1.0) in native_context.parameters
     warning = next(
-        record for record in caplog.records if "Processor parameter rejected" in record.message
+        record for record in caplog.records if "Processor: parameter rejected" in record.message
     )
     assert warning.error_message == "SDK rejected parameter"  # type: ignore[attr-defined]
 
@@ -366,7 +368,7 @@ def test_processing_error_is_structured_rate_limited_and_reports_recovery(
     with caplog.at_level("INFO", logger="livekit.plugins.ai_coustics"):
         enhancer._process(frame)
     recovery = next(
-        record for record in caplog.records if "Processor recovered" in record.getMessage()
+        record for record in caplog.records if "Processor: recovered" in record.getMessage()
     )
     assert recovery.recovered_failure_count == 2
     assert recovery.failed_frame_count == 2
@@ -387,7 +389,7 @@ def test_stream_context_is_added_to_logs_and_resets_between_publications(
         enhancer._process(make_frame())
 
     initialized = next(
-        record for record in caplog.records if "Processor initialized" in record.getMessage()
+        record for record in caplog.records if "Processor: initialized" in record.getMessage()
     )
     assert initialized.room_name == "diagnostic-room"
     assert initialized.participant_identity == "caller"
@@ -443,7 +445,7 @@ def test_close_terminates_releases_and_reports_summary(
     assert enhancer.enabled is False
     assert enhancer._process(frame) is frame
     summary = next(
-        record for record in caplog.records if record.getMessage() == "ai-coustics Processor closed"
+        record for record in caplog.records if record.getMessage() == "Processor: closed"
     )
     assert summary.frame_count == 1
     assert summary.processed_frame_count == 1

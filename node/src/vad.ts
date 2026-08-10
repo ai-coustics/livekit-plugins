@@ -2,10 +2,10 @@ import {
   VAD as LiveKitVAD,
   VADStream as LiveKitVADStream,
   VADEventType,
-  log,
 } from "@livekit/agents";
 import { AudioFrame } from "@livekit/rtc-node";
 
+import { writeLog } from "./log.js";
 import { pcm16ToFloat32 } from "./processor.js";
 import {
   type Model,
@@ -215,12 +215,13 @@ export class VAD extends LiveKitVAD {
         errorType: error instanceof Error ? error.name : typeof error,
         errorMessage: errorDetail(error),
       };
-      const message = "ai-coustics VAD parameter rejected; keeping the current value";
-      try {
-        log().warn(fields, message);
-      } catch {
-        console.warn(message, fields);
-      }
+      writeLog(
+        "warn",
+        "vad",
+        "parameter rejected; keeping the current value",
+        fields,
+        error,
+      );
       return false;
     }
     return true;
@@ -231,8 +232,12 @@ export class VAD extends LiveKitVAD {
       try {
         this.initialVad.terminateSession();
       } catch (error) {
-        console.error(
-          `Failed to terminate ai-coustics VAD session: ${errorDetail(error)}`,
+        writeLog(
+          "error",
+          "vad",
+          "session termination failed",
+          { modelName: this.modelId, errorMessage: errorDetail(error) },
+          error,
         );
       }
       this.initialVad = null;
@@ -317,9 +322,12 @@ class AicVADStream extends LiveKitVADStream {
       .then(() => this.finishOutput())
       .catch(async (error: unknown) => {
         this.pumpError = error;
-        this.logger.error(
-          { err: errorDetail(error) },
-          "ai-coustics VAD stream failed",
+        writeLog(
+          "error",
+          "vad",
+          "stream failed",
+          { modelName: this.model.getId(), errorMessage: errorDetail(error) },
+          error,
         );
         await this.finishOutput();
       })
@@ -374,9 +382,12 @@ class AicVADStream extends LiveKitVADStream {
     try {
       nativeVad.terminateSession();
     } catch (error) {
-      this.logger.error(
-        { err: errorDetail(error) },
-        "Failed to terminate ai-coustics VAD session",
+      writeLog(
+        "error",
+        "vad",
+        "session termination failed",
+        { modelName: this.model.getId(), errorMessage: errorDetail(error) },
+        error,
       );
     }
   }
@@ -492,8 +503,11 @@ class AicVADStream extends LiveKitVADStream {
       }
       if (copiedSamples < frame.samplesPerChannel && !speechBufferFull) {
         speechBufferFull = true;
-        this.logger.warn(
-          "maxBufferedSpeech reached; ignoring further audio for the current speech",
+        writeLog(
+          "warn",
+          "vad",
+          "maximum buffered speech reached; ignoring further audio",
+          { modelName: this.model.getId(), maxBufferedSpeechMs: this.maxBufferedSpeech },
         );
       }
     };
@@ -541,7 +555,16 @@ class AicVADStream extends LiveKitVADStream {
           ) + predictionDelaySamples;
         speechBuffer = new Int16Array(maxSamples);
       } else if (value.sampleRate !== inputSampleRate) {
-        this.logger.error("a frame with a different sample rate was already pushed");
+        writeLog(
+          "error",
+          "vad",
+          "received frame with a different sample rate",
+          {
+            modelName: this.model.getId(),
+            sampleRate: inputSampleRate,
+            receivedSampleRate: value.sampleRate,
+          },
+        );
         continue;
       }
 
@@ -671,7 +694,10 @@ class AicVADStream extends LiveKitVADStream {
         ) {
           slowWarningActive = true;
           this.lastSlowWarning = inferenceCompleted;
-          this.logger.warn(
+          writeLog(
+            "warn",
+            "vad",
+            "inference falling behind realtime",
             {
               inferenceDurationMs,
               blockDurationMs,
@@ -682,7 +708,6 @@ class AicVADStream extends LiveKitVADStream {
               modelName: this.model.getId(),
               modelProvider: "ai-coustics",
             },
-            "ai-coustics VAD inference is falling behind realtime",
           );
         }
       }

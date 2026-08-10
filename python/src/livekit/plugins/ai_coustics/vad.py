@@ -10,7 +10,7 @@ import numpy as np
 
 from livekit import agents, rtc
 
-from .log import logger
+from .log import log_async_exceptions, log_fields, logger
 from .processor import _license_key, _pcm16_to_float32
 
 _SLOW_WARNING_INTERVAL = 10.0
@@ -166,15 +166,16 @@ class VAD(agents.vad.VAD):
                 context.set_parameter(parameter, value)
         except Exception as error:
             logger.warning(
-                "ai-coustics VAD parameter rejected; keeping the current value",
-                extra={
-                    "model_name": self._model_id,
-                    "model_provider": "ai-coustics",
-                    "parameter": name,
-                    "parameter_value": value,
-                    "error_type": type(error).__name__,
-                    "error_message": str(error),
-                },
+                "VAD: parameter rejected; keeping the current value",
+                extra=log_fields(
+                    "vad",
+                    model_name=self._model_id,
+                    model_provider="ai-coustics",
+                    parameter=name,
+                    parameter_value=value,
+                    error_type=type(error).__name__,
+                    error_message=str(error),
+                ),
             )
             return False
         return True
@@ -254,9 +255,18 @@ class VADStream(agents.vad.VADStream):
         try:
             await native_vad.terminate_session_async()
         except Exception as error:
-            logger.error("Failed to terminate ai-coustics VAD session: %s", error)
+            logger.error(
+                "VAD: session termination failed",
+                extra=log_fields(
+                    "vad",
+                    model_name=self._model.get_id(),
+                    error_type=type(error).__name__,
+                    error_message=str(error),
+                ),
+                exc_info=(type(error), error, error.__traceback__),
+            )
 
-    @agents.utils.log_exceptions(logger=logger)
+    @log_async_exceptions("vad", "VAD: stream failed")
     async def _main_task(self) -> None:
         native_vad = self._native_vad
         context = self._context
@@ -370,7 +380,12 @@ class VADStream(agents.vad.VADStream):
             if copied_samples < frame.samples_per_channel and not speech_buffer_full:
                 speech_buffer_full = True
                 logger.warning(
-                    "max_buffered_speech reached; ignoring further audio for the current speech"
+                    "VAD: maximum buffered speech reached; ignoring further audio",
+                    extra=log_fields(
+                        "vad",
+                        model_name=self._model.get_id(),
+                        max_buffered_speech=self._max_buffered_speech,
+                    ),
                 )
 
         def speech_event_frames() -> list[rtc.AudioFrame]:
@@ -422,7 +437,15 @@ class VADStream(agents.vad.VADStream):
                         # of the configured (LiveKit input) rate, not the model's internal rate.
                         prediction_delay_samples = context.get_prediction_delay()
                 elif input_frame.sample_rate != input_sample_rate:
-                    logger.error("a frame with another sample rate was already pushed")
+                    logger.error(
+                        "VAD: received frame with a different sample rate",
+                        extra=log_fields(
+                            "vad",
+                            model_name=self._model.get_id(),
+                            sample_rate=input_sample_rate,
+                            received_sample_rate=input_frame.sample_rate,
+                        ),
+                    )
                     continue
 
                 mono_frame = to_mono(input_frame)
@@ -569,21 +592,18 @@ class VADStream(agents.vad.VADStream):
                         slow_warning_active = True
                         self._last_slow_warning = inference_completed
                         logger.warning(
-                            "ai-coustics VAD inference is falling behind realtime "
-                            "(%.1f ms inference for a %.1f ms block, %.1f ms backlog)",
-                            inference_duration * 1000,
-                            block_duration * 1000,
-                            processing_backlog * 1000,
-                            extra={
-                                "inference_duration": inference_duration,
-                                "block_duration": block_duration,
-                                "realtime_factor": inference_duration / block_duration,
-                                "processing_backlog": processing_backlog,
-                                "sample_rate": input_sample_rate,
-                                "block_size": inference_block_size,
-                                "model_name": self._model.get_id(),
-                                "model_provider": "ai-coustics",
-                            },
+                            "VAD: inference falling behind realtime",
+                            extra=log_fields(
+                                "vad",
+                                inference_duration=inference_duration,
+                                block_duration=block_duration,
+                                realtime_factor=inference_duration / block_duration,
+                                processing_backlog=processing_backlog,
+                                sample_rate=input_sample_rate,
+                                block_size=inference_block_size,
+                                model_name=self._model.get_id(),
+                                model_provider="ai-coustics",
+                            ),
                         )
         finally:
             await self._terminate_session()
