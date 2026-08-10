@@ -92,9 +92,10 @@ server = AgentServer()
 
 @server.rtc_session()
 async def entrypoint(ctx: JobContext) -> None:
-    processor = ai_coustics.Processor(
-        model=enhancement_model,
-        processor_parameters=ai_coustics.ProcessorParameters(enhancement_level=1.0),
+    processor = ai_coustics.Processor(model=enhancement_model)
+    processor.get_context().set_parameter(
+        ai_coustics.ProcessorParameter.EnhancementLevel,
+        1.0,
     )
     vad = ai_coustics.VAD(model=vad_model)
 
@@ -144,7 +145,12 @@ import {
 } from "@livekit/agents";
 import { fileURLToPath } from "node:url";
 
-import { Model, Processor, VAD } from "@ai-coustics/livekit-plugin";
+import {
+  Model,
+  Processor,
+  ProcessorParameter,
+  VAD,
+} from "@ai-coustics/livekit-plugin";
 
 const enhancementModel = Model.fromFile(
   process.env.AIC_ENHANCEMENT_MODEL_PATH!,
@@ -153,10 +159,8 @@ const vadModel = Model.fromFile(process.env.AIC_VAD_MODEL_PATH!);
 
 export default defineAgent({
   entry: async (ctx: JobContext) => {
-    const processor = new Processor({
-      model: enhancementModel,
-      processorParameters: { enhancementLevel: 1.0 },
-    });
+    const processor = new Processor({ model: enhancementModel });
+    processor.getContext().setParameter(ProcessorParameter.EnhancementLevel, 1.0);
     const vad = new VAD({ model: vadModel });
 
     const session = new voice.AgentSession({
@@ -218,31 +222,41 @@ audio routing.
 
 ## Runtime control and lifecycle
 
-Both implementations support partial parameter updates:
+Processor parameters use the SDK's native parameter enum and are updated one at a time. VAD
+parameter objects remain partial updates:
 
 ```python
-processor.set_parameters(ai_coustics.ProcessorParameters(enhancement_level=0.8))
+processor_context = processor.get_context()
+processor_context.set_parameter(ai_coustics.ProcessorParameter.EnhancementLevel, 0.8)
 vad.set_parameters(ai_coustics.VADParameters(sensitivity=0.6))
+
+level = processor_context.get_parameter(ai_coustics.ProcessorParameter.EnhancementLevel)
 ```
 
 ```ts
-processor.setParameters({ enhancementLevel: 0.8 });
+const processorContext = processor.getContext();
+processorContext.setParameter(ProcessorParameter.EnhancementLevel, 0.8);
 vad.setParameters({ sensitivity: 0.6 });
+
+const level = processorContext.getParameter(ProcessorParameter.EnhancementLevel);
 ```
 
-Parameters are applied independently. If the SDK rejects one, the plugin logs a warning, retains
-that parameter's current value, and continues applying the others.
+Contexts returned by `get_context()`/`getContext()` are thin wrappers over the native SDK context.
+The context wrapper adds structured logs for resets, parameter updates, and bearer-token updates;
+read-only getters stay silent. If the SDK rejects a Processor parameter value, the plugin logs a
+warning and retains its current value. VAD parameter fields are applied independently, so one
+rejected field does not block the others.
 
 Processor bypass remains delay-compensated. Disabling a Processor instead returns the original
 audio immediately, without the model delay:
 
 ```python
-processor.set_parameters(ai_coustics.ProcessorParameters(bypass=True))
+processor.get_context().set_parameter(ai_coustics.ProcessorParameter.Bypass, 1.0)
 processor.enabled = False
 ```
 
 ```ts
-processor.setParameters({ bypass: true });
+processor.getContext().setParameter(ProcessorParameter.Bypass, 1);
 processor.setEnabled(false);
 ```
 

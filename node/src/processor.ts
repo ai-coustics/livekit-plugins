@@ -8,10 +8,10 @@ import {
 import {
   type Model,
   Processor as AicProcessor,
-  type ProcessorContext,
-  ProcessorParameter as AicProcessorParameter,
+  type ProcessorContext as AicProcessorContext,
   setSdkId,
 } from "./sdk.js";
+import { ProcessorContext } from "./processor_context.js";
 
 const SLOW_WARNING_INTERVAL_MS = 10_000;
 const SLOW_BACKLOG_THRESHOLD_MS = 200;
@@ -20,16 +20,10 @@ const ERROR_REPORT_INTERVAL_MS = 10_000;
 type ProcessingStage = "initialize" | "validate_frame" | "process" | "convert_output";
 type LogLevel = "debug" | "info" | "warn" | "error";
 
-export interface ProcessorParameters {
-  enhancementLevel?: number;
-  bypass?: boolean;
-}
-
 export interface ProcessorOptions {
   /** Loaded ai-coustics SDK Model. */
   model: Model;
   licenseKey?: string;
-  processorParameters?: ProcessorParameters;
 }
 
 function resolveLicenseKey(value?: string): string {
@@ -103,10 +97,7 @@ export class Processor extends FrameProcessor<AudioFrame> {
         cause: error,
       });
     }
-    this.context = this.processor.getContext();
-    if (options.processorParameters) {
-      this.setParameters(options.processorParameters);
-    }
+    this.context = this.wrapContext(this.processor.getContext());
   }
 
   isEnabled(): boolean {
@@ -125,58 +116,16 @@ export class Processor extends FrameProcessor<AudioFrame> {
     );
   }
 
-  setParameters(parameters: ProcessorParameters): void {
-    if (!this.context) return;
-    if (parameters.enhancementLevel !== undefined) {
-      const level = parameters.enhancementLevel;
-      let applied = false;
-      try {
-        this.context.setParameter(AicProcessorParameter.EnhancementLevel, level);
-        applied = true;
-      } catch (error) {
-        this.warnParameterRejected("enhancementLevel", level, error);
-      }
-      if (applied) {
-        this.writeLog("debug", "ai-coustics Processor parameter updated", {
-          parameter: "enhancementLevel",
-          parameterValue: level,
-        });
-      }
+  getContext(): ProcessorContext {
+    if (!this.processor) {
+      throw new Error("Cannot get context from a closed ai-coustics Processor");
     }
-    if (parameters.bypass !== undefined) {
-      const bypass = parameters.bypass;
-      let applied = false;
-      try {
-        this.context.setParameter(AicProcessorParameter.Bypass, bypass ? 1 : 0);
-        applied = true;
-      } catch (error) {
-        this.warnParameterRejected("bypass", bypass, error);
-      }
-      if (applied) {
-        this.writeLog("debug", "ai-coustics Processor parameter updated", {
-          parameter: "bypass",
-          parameterValue: bypass,
-        });
-      }
-    }
+    return this.wrapContext(this.processor.getContext());
   }
 
-  private warnParameterRejected(
-    parameter: string,
-    parameterValue: unknown,
-    error: unknown,
-  ): void {
-    this.writeLog(
-      "warn",
-      "ai-coustics Processor parameter rejected; keeping the current value",
-      {
-        parameter,
-        parameterValue,
-        errorType: error instanceof Error ? error.name : typeof error,
-        errorMessage: error instanceof Error ? error.message : String(error),
-      },
-      false,
-      error,
+  private wrapContext(context: AicProcessorContext): ProcessorContext {
+    return new ProcessorContext(context, (level, message, fields, error) =>
+      this.writeLog(level, message, fields, false, error),
     );
   }
 

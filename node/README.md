@@ -46,7 +46,12 @@ import {
 } from "@livekit/agents";
 import { fileURLToPath } from "node:url";
 
-import { Model, Processor, VAD } from "@ai-coustics/livekit-plugin";
+import {
+  Model,
+  Processor,
+  ProcessorParameter,
+  VAD,
+} from "@ai-coustics/livekit-plugin";
 
 const enhancementModel = Model.fromFile(
   process.env.AIC_ENHANCEMENT_MODEL_PATH!,
@@ -55,10 +60,8 @@ const vadModel = Model.fromFile(process.env.AIC_VAD_MODEL_PATH!);
 
 export default defineAgent({
   entry: async (ctx: JobContext) => {
-    const processor = new Processor({
-      model: enhancementModel,
-      processorParameters: { enhancementLevel: 1.0 },
-    });
+    const processor = new Processor({ model: enhancementModel });
+    processor.getContext().setParameter(ProcessorParameter.EnhancementLevel, 1.0);
     const vad = new VAD({ model: vadModel });
 
     const session = new voice.AgentSession({
@@ -111,15 +114,21 @@ the preferred topology is required, or provide custom audio routing. The reposit
 
 ## Parameters and audio handling
 
-Runtime updates are partial:
+Processor parameters use the SDK's native parameter enum. VAD parameter objects remain partial
+updates:
 
 ```ts
-processor.setParameters({ enhancementLevel: 0.8 });
+const processorContext = processor.getContext();
+processorContext.setParameter(ProcessorParameter.EnhancementLevel, 0.8);
 vad.setParameters({ sensitivity: 0.6 });
+
+const level = processorContext.getParameter(ProcessorParameter.EnhancementLevel);
 ```
 
-Parameters are applied independently. If the SDK rejects one, the plugin logs a warning, retains
-that parameter's current value, and continues applying the others.
+Contexts returned by `getContext()` add structured logs for resets, parameter updates, and
+bearer-token updates; read-only getters stay silent. If the SDK rejects a Processor parameter
+value, the plugin logs a warning and retains its current value. VAD parameter fields are applied
+independently, so one rejected field does not block the others.
 
 Processor bypass is delay-compensated. Calling `processor.setEnabled(false)` instead returns
 immediate, undelayed input.
