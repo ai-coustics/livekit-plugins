@@ -106,8 +106,7 @@ analyzer = ai_coustics.Analyzer(
 
 @analyzer.on("analysis_result")
 def on_analysis(event: ai_coustics.AnalysisEvent) -> None:
-    # Log it, send it to an alerting pipeline, or retain a session summary.
-    print(event.sequence, event.result.risk_score, event.inference_duration)
+    print(event.result.risk_score)
 
 
 await session.start(
@@ -120,37 +119,16 @@ await session.start(
 )
 ```
 
-`Collector` passes every frame through unchanged while buffering a mono copy for the SDK. The
-`Analyzer` runs `analyze_buffered()` on a worker thread at the configured interval. Every
-successful call emits an `analysis_result` event. Successful results are not logged by the plugin;
-applications can opt in from the callback. The frozen event envelope contains the SDK
-`AnalysisResult`, model and stream identity, completion timestamp, inference duration, and a
-monotonically increasing sequence number. Event callbacks are synchronous; enqueue or schedule
-any network and database work so it does not delay the analyzer loop. RoomIO closes the collector
-and its analyzer together; call `await analyzer.aclose()` yourself if the collector is not owned
-by RoomIO.
+`Collector` passes audio through unchanged while `Analyzer` emits an `analysis_result` event at the
+configured interval. Results are not logged by the plugin; log or handle them in the callback. The
+analyzer also records OpenTelemetry metrics through the process-wide `MeterProvider`. Set
+`enable_metrics=False` to disable them.
 
-The analyzer also records three low-cardinality OpenTelemetry instruments by default:
-
-- `ai_coustics.analyzer.analysis`, a counter with `status=ok|error`
-- `ai_coustics.analyzer.inference_duration`, a histogram in seconds with the same status
-- `ai_coustics.analyzer.score`, a histogram for every SDK score with a bounded `score.name`
-  attribute
-
-They use the process-wide OpenTelemetry `MeterProvider`. LiveKit Agents' Python Cloud telemetry
-provider can export them along with its own metrics; applications that install their own provider
-can route them to any OTLP-compatible backend. Set `enable_metrics=False` when constructing the
-analyzer to disable this instrumentation. Do not turn room, participant, or publication IDs into
-metric attributes; those high-cardinality values are available on `AnalysisEvent` for traces,
-alerts, and application-owned records instead.
-
-For a session-level LiveKit Cloud summary, the callback can also use `ctx.tagger.add(...)` after
-applying an application-specific threshold. Tags are uploaded at session end and should summarize
-the session rather than represent every five-second result.
+RoomIO closes the analyzer with its collector. If RoomIO does not own the collector, call
+`await analyzer.aclose()` yourself.
 
 This is a temporary integration through LiveKit's single `noise_cancellation` slot. Consequently,
-the analyzer collector cannot be installed there alongside `Processor`. A future LiveKit audio-tap
-API should allow analysis to run as a true side channel.
+the collector cannot be installed alongside `Processor` in the same room.
 
 ## Configuration
 
