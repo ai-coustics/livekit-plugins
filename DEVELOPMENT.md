@@ -52,6 +52,11 @@ first frame, downmixes PCM16 input to mono float32, buffers it, and returns the 
 unchanged. Stream boundaries reset the analyzer. Closing either the analyzer or its collector
 stops scheduling and terminates the SDK telemetry session.
 
+`FrameProcessorChain` forwards FrameProcessor lifecycle hooks and applies two enabled processors
+in constructor order. It lets a `Processor` and `Collector` share RoomIO's single
+`noise_cancellation` slot. Putting the collector first analyzes original audio; putting it second
+analyzes enhanced audio.
+
 Python schedules inference with an asyncio task and runs each blocking `analyze_buffered()` call
 through `asyncio.to_thread()`. Shutdown waits for an active inference before terminating the SDK
 session. Node uses a timer around the SDK's synchronous `analyzeBuffered()` API. Both runtimes emit
@@ -126,10 +131,10 @@ media speech, noise, and packet-loss scores. `FileAnalyzer` is intended for comp
 signals and is not appropriate for a live agent stream.
 
 An Analyzer is a side-channel consumer rather than an audio transform. The current workaround is
-a pass-through `FrameProcessor`, which collects early audio but occupies RoomIO's single
-`noise_cancellation` slot and cannot run beside the enhancement `Processor`. An `AudioInput`
-wrapper could coexist with enhancement, but would only observe the already-processed AgentSession
-input and has awkward setup and ownership when RoomIO creates the default input.
+a pass-through `FrameProcessor` in RoomIO's single `noise_cancellation` slot.
+`FrameProcessorChain` allows it to run sequentially with the enhancement `Processor`, but this
+still couples observation to the transform path and makes raw-versus-enhanced placement depend on
+processor order.
 
 The preferred upstream solution is a generic audio observer or tap interface in LiveKit Agents.
 RoomIO or AgentSession should fan frames out to registered observers without allowing observer

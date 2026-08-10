@@ -5,6 +5,7 @@ This repository contains the ai-coustics-maintained Python and Node.js integrati
 ai-coustics SDKs and let LiveKit agents use:
 
 - `Processor` for speech enhancement through LiveKit's audio `FrameProcessor` interface.
+- `FrameProcessorChain` for applying two frame processors in sequence.
 - `VAD` for voice activity detection through LiveKit Agents' streaming VAD interface.
 - `Analyzer` for periodic audio-quality analysis.
 
