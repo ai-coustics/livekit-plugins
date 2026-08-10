@@ -85,12 +85,11 @@ def test_real_processor_with_downloaded_model_and_fifty_ms_frames(
 
 @pytest.mark.skipif(not LICENSE, reason="AIC_SDK_LICENSE is required")
 def test_real_processor_stereo_and_runtime_parameters(model: ai_coustics.Model) -> None:
-    enhancer = ai_coustics.Processor(
-        model=model,
-        processor_parameters=ai_coustics.ProcessorParameters(bypass=True),
-    )
+    enhancer = ai_coustics.Processor(model=model)
+    context = enhancer.get_context()
+    context.set_parameter(ai_coustics.ProcessorParameter.Bypass, 1.0)
     output = enhancer._process(_frame(0, channels=2))
-    enhancer.set_parameters(ai_coustics.ProcessorParameters(bypass=False))
+    context.set_parameter(ai_coustics.ProcessorParameter.Bypass, 0.0)
 
     assert output.num_channels == 2
     assert output.samples_per_channel == SAMPLES_PER_FRAME

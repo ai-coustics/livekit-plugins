@@ -28,7 +28,9 @@ const sdk = vi.hoisted(() => {
   class FakeContext {
     parameters: Array<[number, number]> = [];
     parameterErrors = new Map<number, Error>();
+    updateBearerTokenError: Error | null = null;
     resetCount = 0;
+    bearerTokens: string[] = [];
 
     setParameter(parameter: number, value: number): void {
       const error = this.parameterErrors.get(parameter);
@@ -38,6 +40,19 @@ const sdk = vi.hoisted(() => {
 
     getAudioDelay(): number {
       return 42;
+    }
+
+    getParameter(parameter: number): number {
+      for (let index = this.parameters.length - 1; index >= 0; index -= 1) {
+        const entry = this.parameters[index]!;
+        if (entry[0] === parameter) return entry[1];
+      }
+      throw new Error("parameter has not been set");
+    }
+
+    updateBearerToken(token: string): void {
+      if (this.updateBearerTokenError) throw this.updateBearerTokenError;
+      this.bearerTokens.push(token);
     }
 
     reset(): void {
@@ -80,6 +95,7 @@ const sdk = vi.hoisted(() => {
   class FakeProcessor {
     static constructorError: Error | null = null;
     readonly context = new FakeContext();
+    getContextCalls = 0;
     readonly initializations: Array<[number, number, boolean]> = [];
     readonly blocks: number[][] = [];
     error: Error | null = null;
@@ -94,6 +110,7 @@ const sdk = vi.hoisted(() => {
     }
 
     getContext(): FakeContext {
+      this.getContextCalls += 1;
       return this.context;
     }
 
@@ -135,6 +152,7 @@ vi.mock("@livekit/agents", async (importOriginal) => {
 import {
   Model,
   Processor,
+  ProcessorParameter,
   float32ToPcm16,
   pcm16ToFloat32,
 } from "../src/index.js";
@@ -153,8 +171,8 @@ describe("Processor", () => {
     const enhancer = new Processor({
       model: new sdk.FakeModel(),
       licenseKey: "test-license",
-      processorParameters: { enhancementLevel: 0.75 },
     });
+    enhancer.getContext().setParameter(ProcessorParameter.EnhancementLevel, 0.75);
     const processor = sdk.instances[0]!;
     expect(processor.initializations).toEqual([]);
     expect(processor.blocks).toEqual([]);
@@ -175,6 +193,89 @@ describe("Processor", () => {
     expect(processor.context.parameters.filter(([key]) => key === 1)).toEqual([
       [1, 0.75],
     ]);
+  });
+
+  it("gets a logging ProcessorContext and rejects a closed Processor", () => {
+    const enhancer = new Processor({
+      model: new sdk.FakeModel(),
+      licenseKey: "test-license",
+    });
+    const processor = sdk.instances[0]!;
+
+    expect(enhancer.getContext()).not.toBe(processor.context);
+    expect(processor.getContextCalls).toBe(2); // internal context plus public request
+
+    enhancer.close();
+    expect(() => enhancer.getContext()).toThrow("closed ai-coustics Processor");
+  });
+
+  it("delegates context operations and logs rejected parameters", () => {
+    const enhancer = new Processor({
+      model: new sdk.FakeModel(),
+      licenseKey: "test-license",
+    });
+    const nativeContext = sdk.instances[0]!.context;
+    const context = enhancer.getContext();
+
+    context.setParameter(ProcessorParameter.EnhancementLevel, 0.7);
+    expect(context.getParameter(ProcessorParameter.EnhancementLevel)).toBe(0.7);
+    expect(context.getAudioDelay()).toBe(42);
+    context.reset();
+    context.updateBearerToken("new-token");
+
+    expect(nativeContext.resetCount).toBe(1);
+    expect(nativeContext.bearerTokens).toEqual(["new-token"]);
+
+    nativeContext.parameterErrors.set(1, new Error("out of range"));
+    context.setParameter(ProcessorParameter.EnhancementLevel, 1.1);
+
+    expect(
+      logging.calls.find(
+        ({ level, message }) =>
+          level === "warn" && message.includes("Processor parameter rejected"),
+      )?.payload,
+    ).toMatchObject({
+      parameter: ProcessorParameter.EnhancementLevel,
+      parameterValue: 1.1,
+      errorMessage: "out of range",
+    });
+  });
+
+  it("does not log context getter calls", () => {
+    const enhancer = new Processor({
+      model: new sdk.FakeModel(),
+      licenseKey: "test-license",
+    });
+    const context = enhancer.getContext();
+    context.setParameter(ProcessorParameter.EnhancementLevel, 0.7);
+    logging.calls.length = 0;
+
+    expect(context.getParameter(ProcessorParameter.EnhancementLevel)).toBe(0.7);
+    expect(context.getAudioDelay()).toBe(42);
+
+    expect(logging.calls).toEqual([]);
+  });
+
+  it("logs and rethrows bearer token update failures", () => {
+    const enhancer = new Processor({
+      model: new sdk.FakeModel(),
+      licenseKey: "test-license",
+    });
+    const nativeContext = sdk.instances[0]!.context;
+    const context = enhancer.getContext();
+    nativeContext.updateBearerTokenError = new Error("token update failed");
+
+    expect(() => context.updateBearerToken("new-token")).toThrow(
+      "token update failed",
+    );
+    expect(
+      logging.calls.find(({ message }) =>
+        message.includes("bearer token update failed"),
+      )?.payload,
+    ).toMatchObject({
+      contextOperation: "updateBearerToken",
+      errorMessage: "token update failed",
+    });
   });
 
   it("wraps Processor construction errors", () => {
@@ -218,11 +319,12 @@ describe("Processor", () => {
     const enhancer = new Processor({
       model: new sdk.FakeModel(),
       licenseKey: "test-license",
-      processorParameters: { bypass: true },
     });
+    const context = enhancer.getContext();
+    context.setParameter(ProcessorParameter.Bypass, 1);
     const processor = sdk.instances[0]!;
     enhancer.process(new AudioFrame(new Int16Array(800), 16000, 1, 800));
-    enhancer.setParameters({ enhancementLevel: 0.9 });
+    context.setParameter(ProcessorParameter.EnhancementLevel, 0.9);
     enhancer.process(new AudioFrame(new Int16Array(160), 16000, 1, 160));
 
     expect(processor.context.parameters.filter(([key]) => key === 0)).toHaveLength(1);
@@ -230,7 +332,8 @@ describe("Processor", () => {
       [1, 0.9],
     ]);
     processor.context.parameterErrors.set(1, new Error("enhancement level out of range"));
-    enhancer.setParameters({ enhancementLevel: 1.1, bypass: false });
+    context.setParameter(ProcessorParameter.EnhancementLevel, 1.1);
+    context.setParameter(ProcessorParameter.Bypass, 0);
 
     expect(processor.context.parameters).not.toContainEqual([1, 1.1]);
     expect(processor.context.parameters).toContainEqual([0, 0]);
@@ -240,28 +343,30 @@ describe("Processor", () => {
           level === "warn" && message.includes("Processor parameter rejected"),
       )?.payload,
     ).toMatchObject({
-      parameter: "enhancementLevel",
+      parameter: ProcessorParameter.EnhancementLevel,
       parameterValue: 1.1,
     });
   });
 
-  it("continues other updates when the SDK rejects one parameter", () => {
+  it("allows later updates when the SDK rejects one parameter", () => {
     const enhancer = new Processor({
       model: new sdk.FakeModel(),
       licenseKey: "test-license",
     });
-    const context = sdk.instances[0]!.context;
-    context.parameterErrors.set(1, new Error("SDK rejected parameter"));
+    const nativeContext = sdk.instances[0]!.context;
+    nativeContext.parameterErrors.set(1, new Error("SDK rejected parameter"));
+    const context = enhancer.getContext();
 
-    enhancer.setParameters({ enhancementLevel: 0.8, bypass: true });
+    context.setParameter(ProcessorParameter.EnhancementLevel, 0.8);
+    context.setParameter(ProcessorParameter.Bypass, 1);
 
-    expect(context.parameters).not.toContainEqual([1, 0.8]);
-    expect(context.parameters).toContainEqual([0, 1]);
+    expect(nativeContext.parameters).not.toContainEqual([1, 0.8]);
+    expect(nativeContext.parameters).toContainEqual([0, 1]);
     expect(
       logging.calls.find(({ message }) => message.includes("Processor parameter rejected"))
         ?.payload,
     ).toMatchObject({
-      parameter: "enhancementLevel",
+      parameter: ProcessorParameter.EnhancementLevel,
       errorMessage: "SDK rejected parameter",
     });
   });
@@ -272,7 +377,7 @@ describe("Processor", () => {
       licenseKey: "test-license",
     });
 
-    enhancer.setParameters({ enhancementLevel: 1.1 });
+    enhancer.getContext().setParameter(ProcessorParameter.EnhancementLevel, 1.1);
 
     expect(sdk.instances[0]!.context.parameters).toContainEqual([1, 1.1]);
   });

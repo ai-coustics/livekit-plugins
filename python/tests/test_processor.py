@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from livekit import rtc
-from livekit.plugins.ai_coustics import Model, Processor, ProcessorParameters
+from livekit.plugins.ai_coustics import Model, Processor, ProcessorContext, ProcessorParameter
 
 native_calls: list[tuple[str, int | None]] = []
 
@@ -24,7 +24,9 @@ class FakeModel:
 class FakeContext:
     parameters: list[tuple[object, float]] = field(default_factory=list)
     parameter_errors: dict[str, Exception] = field(default_factory=dict)
+    update_bearer_token_error: Exception | None = None
     reset_count: int = 0
+    bearer_tokens: list[str] = field(default_factory=list)
 
     def set_parameter(self, parameter: object, value: float) -> None:
         if error := self.parameter_errors.get(str(parameter)):
@@ -33,6 +35,14 @@ class FakeContext:
 
     def get_audio_delay(self) -> int:
         return 42
+
+    def get_parameter(self, parameter: object) -> float:
+        return next(value for key, value in reversed(self.parameters) if key == parameter)
+
+    def update_bearer_token(self, token: str) -> None:
+        if self.update_bearer_token_error is not None:
+            raise self.update_bearer_token_error
+        self.bearer_tokens.append(token)
 
     def reset(self) -> None:
         self.reset_count += 1
@@ -49,6 +59,7 @@ class FakeProcessor:
         self.model = model
         self.license_key = license_key
         self.context = FakeContext()
+        self.get_context_calls = 0
         self.inits: list[tuple[int, int, int]] = []
         self.blocks: list[np.ndarray] = []
         self.gain = 1.0
@@ -58,6 +69,7 @@ class FakeProcessor:
         native_calls.append(("processor", None))
 
     def get_context(self) -> FakeContext:
+        self.get_context_calls += 1
         return self.context
 
     def initialize(self, config: aic_sdk.ProcessorConfig) -> None:
@@ -123,6 +135,79 @@ def test_constructs_processor_without_probe_frame() -> None:
     assert processor.context.reset_count == 0
 
 
+def test_get_context_creates_a_logging_context_and_rejects_closed_processor() -> None:
+    enhancer = create_enhancer()
+    processor = FakeProcessor.instances[0]
+
+    context = enhancer.get_context()
+
+    assert isinstance(context, ProcessorContext)
+    assert processor.get_context_calls == 2  # internal context plus the public request
+
+    enhancer._close()
+    with pytest.raises(RuntimeError, match="closed ai-coustics Processor"):
+        enhancer.get_context()
+
+
+def test_context_delegates_sdk_operations_and_logs_rejected_parameters(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    enhancer = create_enhancer()
+    native_context = FakeProcessor.instances[0].context
+    context = enhancer.get_context()
+
+    context.set_parameter(ProcessorParameter.EnhancementLevel, 0.7)
+    assert context.get_parameter(ProcessorParameter.EnhancementLevel) == 0.7
+    assert context.get_audio_delay() == 42
+    context.reset()
+    context.update_bearer_token("new-token")
+
+    assert native_context.reset_count == 1
+    assert native_context.bearer_tokens == ["new-token"]
+
+    native_context.parameter_errors[str(ProcessorParameter.EnhancementLevel)] = ValueError(
+        "out of range"
+    )
+    context.set_parameter(ProcessorParameter.EnhancementLevel, 1.1)
+
+    warning = next(
+        record for record in caplog.records if "Processor parameter rejected" in record.message
+    )
+    assert warning.parameter == "ProcessorParameter.EnhancementLevel"  # type: ignore[attr-defined]
+    assert warning.error_message == "out of range"  # type: ignore[attr-defined]
+
+
+def test_context_getters_do_not_log(caplog: pytest.LogCaptureFixture) -> None:
+    enhancer = create_enhancer()
+    context = enhancer.get_context()
+    context.set_parameter(ProcessorParameter.EnhancementLevel, 0.7)
+    caplog.clear()
+
+    with caplog.at_level("DEBUG", logger="livekit.plugins.ai_coustics"):
+        assert context.get_parameter(ProcessorParameter.EnhancementLevel) == 0.7
+        assert context.get_audio_delay() == 42
+
+    assert caplog.records == []
+
+
+def test_context_logs_and_reraises_bearer_token_update_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    enhancer = create_enhancer()
+    native_context = FakeProcessor.instances[0].context
+    context = enhancer.get_context()
+    native_context.update_bearer_token_error = RuntimeError("token update failed")
+
+    with pytest.raises(RuntimeError, match="token update failed"):
+        context.update_bearer_token("new-token")
+
+    warning = next(
+        record for record in caplog.records if "bearer token update failed" in record.message
+    )
+    assert warning.context_operation == "update_bearer_token"  # type: ignore[attr-defined]
+    assert warning.error_message == "token update failed"  # type: ignore[attr-defined]
+
+
 def test_wraps_processor_construction_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     sdk_error = RuntimeError("invalid license format")
 
@@ -141,7 +226,8 @@ def test_wraps_processor_construction_errors(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_downmixes_stereo_for_sdk_and_preserves_livekit_frame_geometry() -> None:
-    enhancer = create_enhancer(processor_parameters=ProcessorParameters(enhancement_level=0.75))
+    enhancer = create_enhancer()
+    enhancer.get_context().set_parameter(ProcessorParameter.EnhancementLevel, 0.75)
     pcm = np.array([1000, 3000, 2000, 4000, 3000, 5000], dtype=np.int16)
     userdata = {"source": "test"}
     output = enhancer._process(make_frame(channels=2, frames=3, data=pcm, userdata=userdata))
@@ -179,9 +265,11 @@ def test_reinitializes_when_any_frame_geometry_changes() -> None:
 def test_parameter_updates_warn_on_rejection_and_are_not_reapplied(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    enhancer = create_enhancer(processor_parameters=ProcessorParameters(bypass=True))
+    enhancer = create_enhancer()
+    context = enhancer.get_context()
+    context.set_parameter(ProcessorParameter.Bypass, 1.0)
     enhancer._process(make_frame())
-    enhancer.set_parameters(ProcessorParameters(enhancement_level=0.9))
+    context.set_parameter(ProcessorParameter.EnhancementLevel, 0.9)
     enhancer._process(make_frame(frames=160))
     processor = FakeProcessor.instances[0]
 
@@ -192,30 +280,33 @@ def test_parameter_updates_warn_on_rejection_and_are_not_reapplied(
     processor.context.parameter_errors[str(aic_sdk.ProcessorParameter.EnhancementLevel)] = (
         ValueError("enhancement level out of range")
     )
-    enhancer.set_parameters(ProcessorParameters(enhancement_level=1.1, bypass=False))
+    context.set_parameter(ProcessorParameter.EnhancementLevel, 1.1)
+    context.set_parameter(ProcessorParameter.Bypass, 0.0)
 
     assert (aic_sdk.ProcessorParameter.EnhancementLevel, 1.1) not in processor.context.parameters
     assert (aic_sdk.ProcessorParameter.Bypass, 0.0) in processor.context.parameters
     warning = next(
         record for record in caplog.records if "Processor parameter rejected" in record.message
     )
-    assert warning.parameter == "enhancement_level"  # type: ignore[attr-defined]
+    assert warning.parameter == "ProcessorParameter.EnhancementLevel"  # type: ignore[attr-defined]
     assert warning.parameter_value == 1.1  # type: ignore[attr-defined]
 
 
-def test_sdk_parameter_failure_warns_and_does_not_block_other_updates(
+def test_sdk_parameter_failure_warns_and_does_not_block_later_updates(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     enhancer = create_enhancer()
-    context = FakeProcessor.instances[0].context
-    context.parameter_errors[str(aic_sdk.ProcessorParameter.EnhancementLevel)] = RuntimeError(
-        "SDK rejected parameter"
+    native_context = FakeProcessor.instances[0].context
+    native_context.parameter_errors[str(aic_sdk.ProcessorParameter.EnhancementLevel)] = (
+        RuntimeError("SDK rejected parameter")
     )
+    context = enhancer.get_context()
 
-    enhancer.set_parameters(ProcessorParameters(enhancement_level=0.8, bypass=True))
+    context.set_parameter(ProcessorParameter.EnhancementLevel, 0.8)
+    context.set_parameter(ProcessorParameter.Bypass, 1.0)
 
-    assert (aic_sdk.ProcessorParameter.EnhancementLevel, 0.8) not in context.parameters
-    assert (aic_sdk.ProcessorParameter.Bypass, 1.0) in context.parameters
+    assert (aic_sdk.ProcessorParameter.EnhancementLevel, 0.8) not in native_context.parameters
+    assert (aic_sdk.ProcessorParameter.Bypass, 1.0) in native_context.parameters
     warning = next(
         record for record in caplog.records if "Processor parameter rejected" in record.message
     )
@@ -225,7 +316,7 @@ def test_sdk_parameter_failure_warns_and_does_not_block_other_updates(
 def test_parameter_validation_is_delegated_to_the_sdk() -> None:
     enhancer = create_enhancer()
 
-    enhancer.set_parameters(ProcessorParameters(enhancement_level=1.1))
+    enhancer.get_context().set_parameter(ProcessorParameter.EnhancementLevel, 1.1)
 
     assert (
         aic_sdk.ProcessorParameter.EnhancementLevel,

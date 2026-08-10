@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import time
-from dataclasses import dataclass
 
 import aic_sdk
 import numpy as np
@@ -10,6 +9,7 @@ import numpy as np
 from livekit import rtc
 
 from .log import logger
+from .processor_context import ProcessorContext
 
 _SLOW_WARNING_INTERVAL = 10.0
 _SLOW_BACKLOG_THRESHOLD = 0.2
@@ -34,14 +34,6 @@ def _float32_to_pcm16(data: np.ndarray) -> bytes:
     return bytes(np.rint(clipped * 32768.0).astype(np.int16).tobytes())
 
 
-@dataclass
-class ProcessorParameters:
-    """Runtime-adjustable enhancement parameters; ``None`` retains the current value."""
-
-    enhancement_level: float | None = None
-    bypass: bool | None = None
-
-
 class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
     """LiveKit audio frame processor backed by :class:`aic_sdk.Processor`.
 
@@ -55,7 +47,6 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
         *,
         model: aic_sdk.Model,
         license_key: str | None = None,
-        processor_parameters: ProcessorParameters | None = None,
     ) -> None:
         resolved_license_key = _license_key(license_key)
 
@@ -72,11 +63,13 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
         except Exception as error:
             raise RuntimeError(f"Failed to create ai-coustics Processor: {error}") from error
 
-        self._processor: aic_sdk.Processor | None = processor
-        self._context: aic_sdk.ProcessorContext | None = self._processor.get_context()
         self._model_id = model_id
         self._format: tuple[int, int, int] | None = None
         self._stream_info: dict[str, str] = {}
+        self._processor: aic_sdk.Processor | None = processor
+        self._context: ProcessorContext | None = ProcessorContext(
+            self._processor.get_context(), self._diagnostic_fields
+        )
         self._enabled = True
         self._closed = False
 
@@ -104,9 +97,6 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
         self._last_reported_error_signature: tuple[str, str, str] | None = None
         self._last_error_report: float | None = None
 
-        if processor_parameters is not None:
-            self.set_parameters(processor_parameters)
-
     @property
     def enabled(self) -> bool:
         return self._enabled
@@ -124,51 +114,12 @@ class Processor(rtc.FrameProcessor[rtc.AudioFrame]):
             extra=self._diagnostic_fields(),
         )
 
-    def set_parameters(self, parameters: ProcessorParameters) -> None:
-        """Apply a partial Processor-parameter update, warning on rejected values."""
+    def get_context(self) -> ProcessorContext:
+        """Create a context for controlling this Processor."""
 
-        if self._context is None:
-            return
-
-        if parameters.enhancement_level is not None:
-            level = parameters.enhancement_level
-            try:
-                self._context.set_parameter(aic_sdk.ProcessorParameter.EnhancementLevel, level)
-            except Exception as error:
-                self._warn_parameter_rejected("enhancement_level", level, error)
-            else:
-                logger.debug(
-                    "ai-coustics Processor parameter updated",
-                    extra=self._diagnostic_fields(
-                        parameter="enhancement_level", parameter_value=level
-                    ),
-                )
-
-        if parameters.bypass is not None:
-            bypass = parameters.bypass
-            try:
-                self._context.set_parameter(
-                    aic_sdk.ProcessorParameter.Bypass,
-                    1.0 if bypass else 0.0,
-                )
-            except Exception as error:
-                self._warn_parameter_rejected("bypass", bypass, error)
-            else:
-                logger.debug(
-                    "ai-coustics Processor parameter updated",
-                    extra=self._diagnostic_fields(parameter="bypass", parameter_value=bypass),
-                )
-
-    def _warn_parameter_rejected(self, name: str, value: object, error: Exception) -> None:
-        logger.warning(
-            "ai-coustics Processor parameter rejected; keeping the current value",
-            extra=self._diagnostic_fields(
-                parameter=name,
-                parameter_value=value,
-                error_type=type(error).__name__,
-                error_message=str(error),
-            ),
-        )
+        if self._processor is None:
+            raise RuntimeError("Cannot get context from a closed ai-coustics Processor")
+        return ProcessorContext(self._processor.get_context(), self._diagnostic_fields)
 
     def _on_stream_info_updated(
         self,

@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { inflateSync } from "node:zlib";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { Model, Processor, VAD } from "../src/index.js";
+import { Model, Processor, ProcessorParameter, VAD } from "../src/index.js";
 
 initializeLogger({ pretty: false, level: "silent" });
 
@@ -96,12 +96,11 @@ describeIf("native Processor integration", () => {
   }, 120_000);
 
   it("supports stereo and runtime bypass updates", () => {
-    const enhancer = new Processor({
-      model,
-      processorParameters: { bypass: true },
-    });
+    const enhancer = new Processor({ model });
+    const context = enhancer.getContext();
+    context.setParameter(ProcessorParameter.Bypass, 1);
     const output = enhancer.process(frame(0, 2));
-    enhancer.setParameters({ bypass: false });
+    context.setParameter(ProcessorParameter.Bypass, 0);
 
     expect(output.channels).toBe(2);
     expect(output.samplesPerChannel).toBe(samplesPerFrame);
