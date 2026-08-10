@@ -134,6 +134,7 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: "22"
+          registry-url: "https://registry.npmjs.org"
 
       - name: Install latest npm for OIDC support
         run: npm install --global npm@latest
@@ -145,6 +146,10 @@ jobs:
           path: dist
 
       - name: Publish to npm
+        env:
+          # Bootstrap authentication for the first publish. Once npm trusted
+          # publishing is configured, npm prefers OIDC and this secret can be removed.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           name=$(node -p "require('./node/package.json').name")
           version=$(node -p "require('./node/package.json').version")
