@@ -73,7 +73,9 @@ vad.setParameters({
 });
 ```
 
-VAD durations are specified in seconds. See the
+SDK VAD parameter durations (`speechHoldDuration` and `minimumSpeechDuration`) are specified in
+seconds. The `VAD` constructor options `prefixPaddingDuration` and `maxBufferedSpeech` are specified
+in milliseconds. See the
 [Node.js SDK reference](https://docs.ai-coustics.com/reference/sdk/language-bindings/nodejs) and
 [VAD guide](https://docs.ai-coustics.com/models/voice-activity-detection/vad) for parameter ranges,
 model support, and further details.
