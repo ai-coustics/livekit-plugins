@@ -10,6 +10,7 @@ export {
   Model,
   ProcessorParameter,
 } from "./sdk.js";
+export { FrameProcessorChain } from "./frame_processor_chain.js";
 export {
   float32ToPcm16,
   pcm16ToFloat32,

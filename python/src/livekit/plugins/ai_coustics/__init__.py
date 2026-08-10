@@ -4,6 +4,7 @@ from aic_sdk import Model, ProcessorParameter
 from livekit.agents import Plugin
 
 from .analyzer import AnalysisEvent, Analyzer, Collector
+from .frame_processor_chain import FrameProcessorChain
 from .log import logger
 from .processor import Processor
 from .processor_context import ProcessorContext
@@ -27,6 +28,7 @@ __all__ = [
     "AnalysisEvent",
     "Analyzer",
     "Collector",
+    "FrameProcessorChain",
     "Model",
     "Processor",
     "ProcessorContext",

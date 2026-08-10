@@ -95,7 +95,7 @@ Use either component independently by omitting the other from the configuration.
 
 ### Audio-quality analysis
 
-Create an `Analyzer` inside an async function and pass its collector as the room's frame processor:
+Create an `Analyzer` and subscribe to its results:
 
 ```python
 analyzer = ai_coustics.Analyzer(
@@ -107,28 +107,32 @@ analyzer = ai_coustics.Analyzer(
 @analyzer.on("analysis_result")
 def on_analysis(event: ai_coustics.AnalysisEvent) -> None:
     print(event.result.risk_score)
+```
 
+Results are not logged by the plugin; log or handle them in the callback.
+
+### Combining frame processors
+
+Use `FrameProcessorChain` to run enhancement and analysis in the same RoomIO audio path:
+
+```python
+frame_processor = ai_coustics.FrameProcessorChain(processor, analyzer.collector)
 
 await session.start(
     # ... agent, room
     room_options=room_io.RoomOptions(
         audio_input=room_io.AudioInputOptions(
-            noise_cancellation=analyzer.collector,
+            noise_cancellation=frame_processor,
         ),
     ),
 )
 ```
 
-`Collector` passes audio through unchanged while `Analyzer` emits an `analysis_result` event at the
-configured interval. Results are not logged by the plugin; log or handle them in the callback. The
-analyzer also records OpenTelemetry metrics through the process-wide `MeterProvider`. Set
-`enable_metrics=False` to disable them.
+`FrameProcessorChain` runs its processors in order. In the example, the collector analyzes enhanced
+audio; reverse the arguments to analyze the original audio while still returning enhanced audio.
 
-RoomIO closes the analyzer with its collector. If RoomIO does not own the collector, call
-`await analyzer.aclose()` yourself.
-
-This is a temporary integration through LiveKit's single `noise_cancellation` slot. Consequently,
-the collector cannot be installed alongside `Processor` in the same room.
+This still uses LiveKit's `noise_cancellation` slot as a temporary integration. RoomIO owns the
+chain and closes the processor, collector, and analyzer together.
 
 ## Configuration
 

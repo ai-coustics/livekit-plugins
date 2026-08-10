@@ -95,7 +95,7 @@ Use either component independently by omitting the other from the configuration.
 
 ### Audio-quality analysis
 
-Create an `Analyzer` and pass its collector as the room's frame processor:
+Create an `Analyzer` and subscribe to its results:
 
 ```ts
 import { Analyzer } from "@ai-coustics/livekit-plugin";
@@ -108,23 +108,30 @@ const analyzer = new Analyzer({
 analyzer.on("analysisResult", (event) => {
   console.log(event.result.riskScore);
 });
+```
+
+Results are not logged by the plugin; log or handle them in the callback.
+
+### Combining frame processors
+
+Use `FrameProcessorChain` to run enhancement and analysis in the same RoomIO audio path:
+
+```ts
+import { FrameProcessorChain } from "@ai-coustics/livekit-plugin";
+
+const frameProcessor = new FrameProcessorChain(processor, analyzer.collector);
 
 await session.start({
   // ... agent, room
-  inputOptions: { noiseCancellation: analyzer.collector },
+  inputOptions: { noiseCancellation: frameProcessor },
 });
 ```
 
-`Collector` passes audio through unchanged while `Analyzer` emits an `analysisResult` event at the
-configured interval. Results are not logged by the plugin; log or handle them in the callback. The
-analyzer also records OpenTelemetry metrics when the application configures a `MeterProvider`. Set
-`enableMetrics: false` to disable them.
+`FrameProcessorChain` runs its processors in order. In the example, the collector analyzes enhanced
+audio; reverse the arguments to analyze the original audio while still returning enhanced audio.
 
-RoomIO closes the analyzer with its collector. If RoomIO does not own the collector, call
-`analyzer.close()` yourself.
-
-This is a temporary integration through LiveKit's single `noiseCancellation` slot. Consequently,
-the collector cannot be installed alongside `Processor` in the same room.
+This still uses LiveKit's `noiseCancellation` slot as a temporary integration. RoomIO owns the
+chain and closes the processor, collector, and analyzer together.
 
 ## Configuration
 
