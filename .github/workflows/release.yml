@@ -128,6 +128,8 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - uses: actions/checkout@v7
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
@@ -144,9 +146,10 @@ jobs:
 
       - name: Publish to npm
         run: |
-          package="@ai-coustics/livekit-plugin"
-          if npm view "$package@$GITHUB_REF_NAME" version >/dev/null 2>&1; then
-            echo "$package@$GITHUB_REF_NAME is already published"
+          name=$(node -p "require('./node/package.json').name")
+          version=$(node -p "require('./node/package.json').version")
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "$name@$version is already published"
           else
             npm publish dist/*.tgz --access public
           fi
