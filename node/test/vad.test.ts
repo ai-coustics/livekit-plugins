@@ -229,11 +229,13 @@ describe("VAD", () => {
     expect(context.getParameter(sdk.VadParameter.MinimumSpeechDuration)).toBe(0.1);
     expect(warning).toHaveBeenCalledWith(
       expect.objectContaining({
+        plugin: "ai-coustics",
+        component: "vad",
         parameter: "sensitivity",
         parameterValue: 2,
         errorMessage: "SDK rejected parameter",
       }),
-      "ai-coustics VAD parameter rejected; keeping the current value",
+      "VAD: parameter rejected; keeping the current value",
     );
     warning.mockRestore();
   });
@@ -439,7 +441,7 @@ describe("VAD", () => {
         parameter: "sensitivity",
         errorMessage: "SDK rejected stored parameter",
       }),
-      "ai-coustics VAD parameter rejected; keeping the current value",
+      "VAD: parameter rejected; keeping the current value",
     );
     warning.mockRestore();
     await Promise.all([collectEvents(firstStream), collectEvents(secondStream)]);

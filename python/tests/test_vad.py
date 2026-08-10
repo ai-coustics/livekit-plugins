@@ -207,8 +207,10 @@ def test_rejected_parameter_warns_and_does_not_block_other_updates(
     assert context.get_parameter(aic_sdk.VadParameter.SpeechHoldDuration) == 0.6
     assert vad.min_silence_duration == 0.6
     warning = next(
-        record for record in caplog.records if "VAD parameter rejected" in record.message
+        record for record in caplog.records if "VAD: parameter rejected" in record.message
     )
+    assert warning.plugin == "ai-coustics"  # type: ignore[attr-defined]
+    assert warning.component == "vad"  # type: ignore[attr-defined]
     assert warning.parameter == "sensitivity"  # type: ignore[attr-defined]
     assert warning.error_message == "SDK rejected parameter"  # type: ignore[attr-defined]
 
@@ -225,7 +227,7 @@ def test_rejected_constructor_parameter_keeps_vad_operational(
 
     assert context.get_parameter(aic_sdk.VadParameter.Sensitivity) == 0.5
     assert context.get_parameter(aic_sdk.VadParameter.MinimumSpeechDuration) == 0.1
-    assert any("VAD parameter rejected" in record.message for record in caplog.records)
+    assert any("VAD: parameter rejected" in record.message for record in caplog.records)
 
 
 def test_wraps_native_vad_construction_errors(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -565,7 +567,7 @@ async def test_rejected_parameter_reapply_does_not_block_a_future_stream(
     second_context = FakeVadAsync.instances[1].context
 
     assert second_context.get_parameter(aic_sdk.VadParameter.Sensitivity) == 0.5
-    assert any("VAD parameter rejected" in record.message for record in caplog.records)
+    assert any("VAD: parameter rejected" in record.message for record in caplog.records)
     await collect_events(first_stream)
     await collect_events(second_stream)
 

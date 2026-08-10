@@ -2,12 +2,21 @@ import { AudioFrame, FrameProcessor } from "@livekit/rtc-node";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const logging = vi.hoisted(() => {
-  const calls: Array<{ fields: Record<string, unknown>; message: string }> = [];
+  const calls: Array<{
+    level: "debug" | "info" | "warn" | "error";
+    fields: Record<string, unknown>;
+    message: string;
+  }> = [];
+  const write = (level: "debug" | "info" | "warn" | "error") =>
+    (fields: Record<string, unknown>, message: string) =>
+      calls.push({ level, fields, message });
   return {
     calls,
     logger: {
-      info: (fields: Record<string, unknown>, message: string) =>
-        calls.push({ fields, message }),
+      debug: write("debug"),
+      info: write("info"),
+      warn: write("warn"),
+      error: write("error"),
     },
   };
 });
@@ -230,7 +239,6 @@ describe("Analyzer", () => {
   });
 
   it("records failed analyses without score measurements", () => {
-    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const analyzer = new Analyzer({
       model: { getId: () => "analysis-test-model" } as never,
       licenseKey: "test-license",
@@ -248,11 +256,18 @@ describe("Analyzer", () => {
       },
     ]);
     expect(telemetry.measurements.score).toEqual([]);
-    expect(errorLog).toHaveBeenCalledWith(
-      "ai-coustics Analyzer failed to analyze buffered audio",
-      expect.any(Error),
+    expect(logging.calls).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        message: "Analyzer: buffered audio analysis failed",
+        fields: expect.objectContaining({
+          plugin: "ai-coustics",
+          component: "analyzer",
+          modelName: "analysis-test-model",
+          error: expect.any(Error),
+        }),
+      }),
     );
-    errorLog.mockRestore();
     analyzer.close();
   });
 

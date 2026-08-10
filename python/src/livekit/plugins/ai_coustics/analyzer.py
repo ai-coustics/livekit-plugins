@@ -13,7 +13,7 @@ from opentelemetry import metrics
 
 from livekit import rtc
 
-from .log import logger
+from .log import log_fields, logger
 from .processor import _license_key, _pcm16_to_float32
 
 _DEFAULT_ANALYSIS_INTERVAL = 5.0
@@ -125,7 +125,15 @@ class Collector(rtc.FrameProcessor[rtc.AudioFrame]):
         try:
             self._reset_analyzer()
         except Exception as error:
-            logger.error("Failed to reset ai-coustics Analyzer: %s", error)
+            logger.error(
+                "Analyzer: reset failed",
+                extra=log_fields(
+                    "analyzer",
+                    error_type=type(error).__name__,
+                    error_message=str(error),
+                ),
+                exc_info=(type(error), error, error.__traceback__),
+            )
 
     def _process(self, frame: rtc.AudioFrame) -> rtc.AudioFrame:
         collector = self._collector
@@ -164,7 +172,10 @@ class Collector(rtc.FrameProcessor[rtc.AudioFrame]):
             collector.buffer(mono)
             self._has_buffered_audio = True
         except Exception:
-            logger.exception("ai-coustics Collector failed; passing audio through")
+            logger.exception(
+                "Collector: failed; passing audio through",
+                extra=log_fields("collector", **self._stream_info),
+            )
 
         return frame
 
@@ -236,7 +247,10 @@ class Analyzer(rtc.EventEmitter[Literal["analysis_result"]]):
         try:
             await asyncio.to_thread(native_analyzer.terminate_session)
         except Exception:
-            logger.exception("Failed to terminate ai-coustics Analyzer session")
+            logger.exception(
+                "Analyzer: session termination failed",
+                extra=log_fields("analyzer", model_name=self._model_id),
+            )
 
     async def _analyze_once(self, native_analyzer: aic_sdk.Analyzer) -> None:
         started = time.perf_counter()
@@ -266,7 +280,15 @@ class Analyzer(rtc.EventEmitter[Literal["analysis_result"]]):
         try:
             self.emit("analysis_result", event)
         except Exception:
-            logger.exception("Failed to emit ai-coustics analysis result event")
+            logger.exception(
+                "Analyzer: result event emission failed",
+                extra=log_fields(
+                    "analyzer",
+                    model_name=self._model_id,
+                    sequence=self._sequence,
+                    **stream_info,
+                ),
+            )
 
     def _record_analysis_metrics(
         self,
@@ -289,7 +311,14 @@ class Analyzer(rtc.EventEmitter[Literal["analysis_result"]]):
                         attributes={**_METRIC_BASE_ATTRIBUTES, "score.name": score_name},
                     )
         except Exception:
-            logger.exception("Failed to record ai-coustics Analyzer metrics")
+            logger.exception(
+                "Analyzer: metrics recording failed",
+                extra=log_fields(
+                    "analyzer",
+                    model_name=self._model_id,
+                    status=status,
+                ),
+            )
 
     async def _analysis_loop(self) -> None:
         native_analyzer = self._native_analyzer
@@ -308,7 +337,14 @@ class Analyzer(rtc.EventEmitter[Literal["analysis_result"]]):
                 try:
                     await self._analyze_once(native_analyzer)
                 except Exception:
-                    logger.exception("ai-coustics Analyzer failed to analyze buffered audio")
+                    logger.exception(
+                        "Analyzer: buffered audio analysis failed",
+                        extra=log_fields(
+                            "analyzer",
+                            model_name=self._model_id,
+                            **self.collector.stream_info,
+                        ),
+                    )
         finally:
             await self._terminate_session()
 

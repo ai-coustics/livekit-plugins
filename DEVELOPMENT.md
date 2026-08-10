@@ -65,6 +65,27 @@ default. They also record aggregate score, inference-duration, and success/error
 through the process-wide OpenTelemetry metrics API; operational errors remain logged and fail-open
 for the room audio path.
 
+## Logging convention
+
+Plugin diagnostics follow LiveKit's structured logging conventions in both runtimes. Python uses
+the `livekit.plugins.ai_coustics` logger and passes context through `extra`; Node writes an object
+before the message through LiveKit's Pino logger. Do not embed changing values or serialized
+objects in the message when they can be represented as fields.
+
+Human-readable messages use `Component: event`, for example `Processor: initialized` or
+`VAD: inference falling behind realtime`. Every plugin record also includes the stable fields
+`plugin=ai-coustics` and `component=processor|vad|analyzer|collector` (`logger` is reserved for a
+failure in the logging bridge itself). Python field names use
+snake_case and durations are in seconds; Node field names use camelCase and durations are suffixed
+with `Ms`. Exceptions should retain the original exception/traceback in the logging API and add
+stable error fields where callers need to filter or aggregate failures.
+
+Provider identity is deliberately not repeated as a bracketed message prefix. LiveKit's Python
+formatter already displays the hierarchical logger name, while the structured `plugin` field
+keeps Node, JSON, and OpenTelemetry records queryable. Node falls back to the same formatted
+message and fields on the console when objects are created before LiveKit initializes its global
+logger; debug records remain silent in that case.
+
 ## Future work
 
 ### LiveKit `download-files` integration
