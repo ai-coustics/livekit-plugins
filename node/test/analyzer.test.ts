@@ -12,6 +12,15 @@ const logging = vi.hoisted(() => {
   };
 });
 
+const telemetry = vi.hoisted(() => {
+  const measurements = {
+    analysis: [] as Array<{ value: number; attributes?: Record<string, unknown> }>,
+    duration: [] as Array<{ value: number; attributes?: Record<string, unknown> }>,
+    score: [] as Array<{ value: number; attributes?: Record<string, unknown> }>,
+  };
+  return { measurements };
+});
+
 const sdk = vi.hoisted(() => {
   class FakeCollector {
     initializations: Array<[number, number, boolean]> = [];
@@ -30,9 +39,11 @@ const sdk = vi.hoisted(() => {
     analyzeCalls = 0;
     resetCalls = 0;
     terminateCalls = 0;
+    error: Error | null = null;
 
     analyzeBuffered() {
       this.analyzeCalls += 1;
+      if (this.error) throw this.error;
       return {
         riskScore: 0.1,
         speakerReverb: 0.2,
@@ -86,7 +97,28 @@ vi.mock("@livekit/agents", async (importOriginal) => {
   return { ...actual, log: () => logging.logger };
 });
 
-import { Analyzer, Collector } from "../src/index.js";
+vi.mock("@opentelemetry/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@opentelemetry/api")>();
+  const instrument = (name: keyof typeof telemetry.measurements) => ({
+    add: (value: number, attributes?: Record<string, unknown>) =>
+      telemetry.measurements[name].push({ value, attributes }),
+    record: (value: number, attributes?: Record<string, unknown>) =>
+      telemetry.measurements[name].push({ value, attributes }),
+  });
+  return {
+    ...actual,
+    metrics: {
+      ...actual.metrics,
+      getMeter: () => ({
+        createCounter: () => instrument("analysis"),
+        createHistogram: (name: string) =>
+          instrument(name.endsWith("score") ? "score" : "duration"),
+      }),
+    },
+  };
+});
+
+import { type AnalysisEvent, Analyzer, Collector } from "../src/index.js";
 
 function makeFrame(channels = 1): AudioFrame {
   const mono = [32767, -32768, 16384, -16384];
@@ -103,13 +135,16 @@ describe("Analyzer", () => {
     sdk.collectors.length = 0;
     sdk.analyzers.length = 0;
     sdk.sdkIds.length = 0;
+    telemetry.measurements.analysis.length = 0;
+    telemetry.measurements.duration.length = 0;
+    telemetry.measurements.score.length = 0;
   });
 
   afterEach(() => vi.useRealTimers());
 
   it("exposes a transparent FrameProcessor collector that downmixes audio", () => {
     const analyzer = new Analyzer({
-      model: {} as never,
+      model: { getId: () => "analysis-test-model" } as never,
       licenseKey: "test-license",
       analysisInterval: 60,
     });
@@ -134,38 +169,54 @@ describe("Analyzer", () => {
     expect(sdk.analyzers[0]!.terminateCalls).toBe(1);
   });
 
-  it("analyzes on the configured interval and logs the result", () => {
+  it("analyzes on the configured interval and emits without logging the result", () => {
     const analyzer = new Analyzer({
-      model: {} as never,
+      model: { getId: () => "analysis-test-model" } as never,
       licenseKey: "test-license",
       analysisInterval: 0.01,
+    });
+    const events: AnalysisEvent[] = [];
+    analyzer.on("analysisResult", (event) => events.push(event));
+    analyzer.collector.onStreamInfoUpdated({
+      roomName: "test-room",
+      participantIdentity: "test-participant",
+      publicationSid: "TR_test",
     });
     analyzer.collector.process(makeFrame());
 
     vi.advanceTimersByTime(10);
 
     expect(sdk.analyzers[0]!.analyzeCalls).toBe(1);
-    expect(logging.calls).toEqual([
+    expect(logging.calls).toEqual([]);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual(
+      expect.objectContaining({
+        sequence: 1,
+        modelId: "analysis-test-model",
+        roomName: "test-room",
+        participantIdentity: "test-participant",
+        publicationSid: "TR_test",
+      }),
+    );
+    expect(Object.isFrozen(events[0])).toBe(true);
+    expect(Object.isFrozen(events[0]!.result)).toBe(true);
+    expect(telemetry.measurements.analysis).toEqual([
       {
-        message: "ai-coustics analysis result",
-        fields: {
-          modelProvider: "ai-coustics",
-          riskScore: 0.1,
-          speakerReverb: 0.2,
-          speakerLoudness: 0.3,
-          interferingSpeech: 0.4,
-          mediaSpeech: 0.5,
-          noise: 0.6,
-          packetLoss: 0.7,
-        },
+        value: 1,
+        attributes: { model_provider: "ai-coustics", status: "ok" },
       },
     ]);
+    expect(telemetry.measurements.score).toHaveLength(7);
+    expect(telemetry.measurements.score[0]).toEqual({
+      value: 0.1,
+      attributes: { model_provider: "ai-coustics", "score.name": "risk_score" },
+    });
     analyzer.close();
   });
 
   it("stops the analyzer when RoomIO closes its collector", () => {
     const analyzer = new Analyzer({
-      model: {} as never,
+      model: { getId: () => "analysis-test-model" } as never,
       licenseKey: "test-license",
       analysisInterval: 1,
     });
@@ -178,9 +229,36 @@ describe("Analyzer", () => {
     expect(sdk.analyzers[0]!.analyzeCalls).toBe(0);
   });
 
+  it("records failed analyses without score measurements", () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const analyzer = new Analyzer({
+      model: { getId: () => "analysis-test-model" } as never,
+      licenseKey: "test-license",
+      analysisInterval: 0.01,
+    });
+    sdk.analyzers[0]!.error = new Error("analysis failed");
+    analyzer.collector.process(makeFrame());
+
+    vi.advanceTimersByTime(10);
+
+    expect(telemetry.measurements.analysis).toEqual([
+      {
+        value: 1,
+        attributes: { model_provider: "ai-coustics", status: "error" },
+      },
+    ]);
+    expect(telemetry.measurements.score).toEqual([]);
+    expect(errorLog).toHaveBeenCalledWith(
+      "ai-coustics Analyzer failed to analyze buffered audio",
+      expect.any(Error),
+    );
+    errorLog.mockRestore();
+    analyzer.close();
+  });
+
   it("defaults to analyzing every five seconds", () => {
     const analyzer = new Analyzer({
-      model: {} as never,
+      model: { getId: () => "analysis-test-model" } as never,
       licenseKey: "test-license",
     });
     analyzer.collector.process(makeFrame());
@@ -199,7 +277,7 @@ describe("Analyzer", () => {
       expect(
         () =>
           new Analyzer({
-            model: {} as never,
+            model: { getId: () => "analysis-test-model" } as never,
             licenseKey: "test-license",
             analysisInterval,
           }),

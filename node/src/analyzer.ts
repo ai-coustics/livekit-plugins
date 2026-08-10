@@ -1,4 +1,6 @@
-import { log } from "@livekit/agents";
+import type { TypedEventEmitter as TypedEmitter } from "@livekit/typed-emitter";
+import { metrics } from "@opentelemetry/api";
+import { EventEmitter } from "node:events";
 import {
   AudioFrame,
   FrameProcessor,
@@ -16,6 +18,30 @@ import {
 } from "./sdk.js";
 
 const DEFAULT_ANALYSIS_INTERVAL_SECONDS = 5;
+const meter = metrics.getMeter("ai-coustics-livekit-plugin");
+const analysisCount = meter.createCounter("ai_coustics.analyzer.analysis", {
+  description: "Number of ai-coustics buffered audio analyses",
+});
+const inferenceDuration = meter.createHistogram(
+  "ai_coustics.analyzer.inference_duration",
+  {
+    unit: "s",
+    description: "Duration of ai-coustics buffered audio analysis",
+  },
+);
+const score = meter.createHistogram("ai_coustics.analyzer.score", {
+  description: "Audio analysis score produced by ai-coustics",
+});
+const metricBaseAttributes = { model_provider: "ai-coustics" } as const;
+const resultFields = [
+  ["risk_score", "riskScore"],
+  ["speaker_reverb", "speakerReverb"],
+  ["speaker_loudness", "speakerLoudness"],
+  ["interfering_speech", "interferingSpeech"],
+  ["media_speech", "mediaSpeech"],
+  ["noise", "noise"],
+  ["packet_loss", "packetLoss"],
+] as const satisfies ReadonlyArray<readonly [string, keyof AnalysisResult]>;
 
 export interface AnalyzerOptions {
   /** Loaded ai-coustics SDK analysis model. */
@@ -23,7 +49,26 @@ export interface AnalyzerOptions {
   licenseKey?: string;
   /** Seconds between analyses. Defaults to 5. */
   analysisInterval?: number;
+  /** Record aggregate OpenTelemetry metrics. Defaults to true. */
+  enableMetrics?: boolean;
 }
+
+export interface AnalysisEvent {
+  readonly result: Readonly<AnalysisResult>;
+  /** Unix timestamp in milliseconds recorded after inference completed. */
+  readonly timestamp: number;
+  /** Elapsed inference time in milliseconds. */
+  readonly inferenceDuration: number;
+  readonly sequence: number;
+  readonly modelId: string;
+  readonly roomName?: string;
+  readonly participantIdentity?: string;
+  readonly publicationSid?: string;
+}
+
+export type AnalyzerCallbacks = {
+  analysisResult: (event: AnalysisEvent) => void;
+};
 
 function resolveLicenseKey(value?: string): string {
   const key = value || process.env.AIC_SDK_LICENSE;
@@ -45,6 +90,8 @@ export class Collector extends FrameProcessor<AudioFrame> {
   private readonly resetAnalyzer: () => void;
   private readonly closeAnalyzer: () => void;
   private streamFormat: [number, number, number] | null = null;
+  private streamInfo: FrameProcessorStreamInfo | null = null;
+  private hasBufferedAudio = false;
   private collectingEnabled = true;
   private closed = false;
 
@@ -70,14 +117,20 @@ export class Collector extends FrameProcessor<AudioFrame> {
   }
 
   get initialized(): boolean {
-    return this.streamFormat !== null && this.nativeCollector !== null;
+    return this.hasBufferedAudio && this.nativeCollector !== null;
   }
 
-  override onStreamInfoUpdated(_info: FrameProcessorStreamInfo): void {
+  get currentStreamInfo(): FrameProcessorStreamInfo | null {
+    return this.streamInfo ? { ...this.streamInfo } : null;
+  }
+
+  override onStreamInfoUpdated(info: FrameProcessorStreamInfo): void {
+    this.streamInfo = { ...info };
     this.reset();
   }
 
   override onStreamInfoCleared(): void {
+    this.streamInfo = null;
     this.reset();
   }
 
@@ -122,6 +175,7 @@ export class Collector extends FrameProcessor<AudioFrame> {
         }
       }
       collector.buffer(mono);
+      this.hasBufferedAudio = true;
     } catch (error) {
       console.error("ai-coustics Collector failed; passing audio through", error);
     }
@@ -131,6 +185,7 @@ export class Collector extends FrameProcessor<AudioFrame> {
 
   private reset(): void {
     if (this.closed) return;
+    this.hasBufferedAudio = false;
     try {
       this.resetAnalyzer();
     } catch (error) {
@@ -142,6 +197,8 @@ export class Collector extends FrameProcessor<AudioFrame> {
     this.closed = true;
     this.collectingEnabled = false;
     this.streamFormat = null;
+    this.streamInfo = null;
+    this.hasBufferedAudio = false;
     this.nativeCollector = null;
   }
 
@@ -152,15 +209,19 @@ export class Collector extends FrameProcessor<AudioFrame> {
   }
 }
 
-/** Owns an SDK analyzer pair and periodically logs analysis of collected room audio. */
-export class Analyzer {
+/** Owns an SDK analyzer pair and periodically reports analysis of collected room audio. */
+export class Analyzer extends (EventEmitter as new () => TypedEmitter<AnalyzerCallbacks>) {
   readonly collector: Collector;
 
   private nativeAnalyzer: AnalyzerInstance | null;
   private readonly timer: ReturnType<typeof setInterval>;
+  private readonly modelId: string;
+  private readonly enableMetrics: boolean;
+  private sequence = 0;
   private closed = false;
 
   constructor(options: AnalyzerOptions) {
+    super();
     const analysisInterval =
       options.analysisInterval ?? DEFAULT_ANALYSIS_INTERVAL_SECONDS;
     if (!Number.isFinite(analysisInterval) || analysisInterval <= 0) {
@@ -170,6 +231,7 @@ export class Analyzer {
     setSdkId(9);
     let pair: ReturnType<typeof analyzerPair>;
     try {
+      this.modelId = options.model.getId();
       pair = analyzerPair(options.model, resolveLicenseKey(options.licenseKey));
     } catch (error) {
       throw new Error(`Failed to create ai-coustics Analyzer: ${errorDetail(error)}`, {
@@ -178,6 +240,7 @@ export class Analyzer {
     }
 
     this.nativeAnalyzer = pair.analyzer;
+    this.enableMetrics = options.enableMetrics ?? true;
     this.collector = new Collector(
       pair.collector,
       () => pair.analyzer.reset(),
@@ -191,29 +254,55 @@ export class Analyzer {
     const analyzer = this.nativeAnalyzer;
     if (!analyzer || !this.collector.initialized) return;
 
+    const started = performance.now();
     try {
-      const result = analyzer.analyzeBuffered();
-      this.logResult(result);
+      const nativeResult = analyzer.analyzeBuffered();
+      const elapsed = performance.now() - started;
+      const result = Object.freeze({ ...nativeResult });
+      this.sequence += 1;
+      const streamInfo = this.collector.currentStreamInfo;
+      const event = Object.freeze({
+        result,
+        timestamp: Date.now(),
+        inferenceDuration: elapsed,
+        sequence: this.sequence,
+        modelId: this.modelId,
+        ...(streamInfo ?? {}),
+      }) satisfies AnalysisEvent;
+
+      this.recordMetrics(elapsed, "ok", result);
+      try {
+        this.emit("analysisResult", event);
+      } catch (error) {
+        console.error("Failed to emit ai-coustics analysis result event", error);
+      }
     } catch (error) {
+      this.recordMetrics(performance.now() - started, "error");
       console.error("ai-coustics Analyzer failed to analyze buffered audio", error);
     }
   }
 
-  private logResult(result: AnalysisResult): void {
-    const fields = {
-      modelProvider: "ai-coustics",
-      riskScore: result.riskScore,
-      speakerReverb: result.speakerReverb,
-      speakerLoudness: result.speakerLoudness,
-      interferingSpeech: result.interferingSpeech,
-      mediaSpeech: result.mediaSpeech,
-      noise: result.noise,
-      packetLoss: result.packetLoss,
-    };
+  private recordMetrics(
+    inferenceDurationMs: number,
+    status: "ok" | "error",
+    result?: Readonly<AnalysisResult>,
+  ): void {
+    if (!this.enableMetrics) return;
+
     try {
-      log().info(fields, "ai-coustics analysis result");
-    } catch {
-      console.info("ai-coustics analysis result", fields);
+      const attributes = { ...metricBaseAttributes, status };
+      analysisCount.add(1, attributes);
+      inferenceDuration.record(inferenceDurationMs / 1000, attributes);
+      if (result) {
+        for (const [scoreName, property] of resultFields) {
+          score.record(result[property], {
+            ...metricBaseAttributes,
+            "score.name": scoreName,
+          });
+        }
+      }
+    } catch (error) {
+      console.error("Failed to record ai-coustics Analyzer metrics", error);
     }
   }
 

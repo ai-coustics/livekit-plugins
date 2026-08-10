@@ -11,11 +11,12 @@ import numpy as np
 import pytest
 
 from livekit import rtc
-from livekit.plugins.ai_coustics import Analyzer, Collector
+from livekit.plugins.ai_coustics import AnalysisEvent, Analyzer, Collector
 
 
 class FakeModel:
-    pass
+    def get_id(self) -> str:
+        return "analysis-test-model"
 
 
 @dataclass
@@ -50,9 +51,12 @@ class FakeNativeAnalyzer:
         self.reset_calls = 0
         self.terminate_calls = 0
         self.result = FakeResult()
+        self.error: Exception | None = None
 
     def analyze_buffered(self) -> FakeResult:
         self.analyze_calls += 1
+        if self.error is not None:
+            raise self.error
         return self.result
 
     def reset(self) -> None:
@@ -80,6 +84,34 @@ def fake_sdk(
 
     monkeypatch.setattr("livekit.plugins.ai_coustics.analyzer.asyncio.to_thread", run_immediately)
     return collector, analyzer, sdk_ids
+
+
+class FakeInstrument:
+    def __init__(self) -> None:
+        self.measurements: list[tuple[float, dict[str, str]]] = []
+
+    def add(self, value: float, *, attributes: dict[str, str]) -> None:
+        self.measurements.append((value, attributes))
+
+    def record(self, value: float, *, attributes: dict[str, str]) -> None:
+        self.measurements.append((value, attributes))
+
+
+@pytest.fixture(autouse=True)
+def metric_instruments(monkeypatch: pytest.MonkeyPatch) -> dict[str, FakeInstrument]:
+    instruments = {
+        "analysis": FakeInstrument(),
+        "duration": FakeInstrument(),
+        "score": FakeInstrument(),
+    }
+    monkeypatch.setattr(
+        "livekit.plugins.ai_coustics.analyzer._ANALYSIS_COUNT", instruments["analysis"]
+    )
+    monkeypatch.setattr(
+        "livekit.plugins.ai_coustics.analyzer._INFERENCE_DURATION", instruments["duration"]
+    )
+    monkeypatch.setattr("livekit.plugins.ai_coustics.analyzer._SCORE", instruments["score"])
+    return instruments
 
 
 def make_frame(*, channels: int = 1) -> rtc.AudioFrame:
@@ -125,15 +157,23 @@ async def test_collector_is_transparent_frame_processor_and_downmixes(
 
 
 @pytest.mark.asyncio
-async def test_analyzes_on_interval_and_logs_every_result(
+async def test_analyzes_on_interval_and_emits_without_logging_result(
     fake_sdk: tuple[FakeCollector, FakeNativeAnalyzer, list[int]],
     caplog: pytest.LogCaptureFixture,
+    metric_instruments: dict[str, FakeInstrument],
 ) -> None:
     _, native_analyzer, _ = fake_sdk
     analyzer = Analyzer(
         model=cast(aic_sdk.Model, FakeModel()),
         license_key="test-license",
         analysis_interval=0.01,
+    )
+    events: list[AnalysisEvent] = []
+    analyzer.on("analysis_result", events.append)
+    analyzer.collector._on_stream_info_updated(
+        room_name="test-room",
+        participant_identity="test-participant",
+        publication_sid="TR_test",
     )
     analyzer.collector._process(make_frame())
 
@@ -145,11 +185,77 @@ async def test_analyzes_on_interval_and_logs_every_result(
 
     await asyncio.wait_for(analyzer.aclose(), timeout=1.0)
     assert native_analyzer.analyze_calls >= 1
-    record = next(
-        record for record in caplog.records if record.message == "ai-coustics analysis result"
+    assert not any(record.message == "ai-coustics analysis result" for record in caplog.records)
+
+    event = events[0]
+    assert event.result is native_analyzer.result
+    assert event.sequence == 1
+    assert event.model_id == "analysis-test-model"
+    assert event.room_name == "test-room"
+    assert event.participant_identity == "test-participant"
+    assert event.publication_sid == "TR_test"
+    assert event.timestamp > 0
+    assert event.inference_duration >= 0
+
+    assert metric_instruments["analysis"].measurements[0] == (
+        1,
+        {"model_provider": "ai-coustics", "status": "ok"},
     )
-    assert record.risk_score == 0.1  # type: ignore[attr-defined]
-    assert record.packet_loss == 0.7  # type: ignore[attr-defined]
+    assert len(metric_instruments["duration"].measurements) >= 1
+    assert len(metric_instruments["score"].measurements) >= 7
+    assert metric_instruments["score"].measurements[0] == (
+        0.1,
+        {"model_provider": "ai-coustics", "score.name": "risk_score"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_can_disable_metrics(
+    fake_sdk: tuple[FakeCollector, FakeNativeAnalyzer, list[int]],
+    metric_instruments: dict[str, FakeInstrument],
+) -> None:
+    analyzer = Analyzer(
+        model=cast(aic_sdk.Model, FakeModel()),
+        license_key="test-license",
+        analysis_interval=0.01,
+        enable_metrics=False,
+    )
+    analyzer.collector._process(make_frame())
+
+    for _ in range(20):
+        if fake_sdk[1].analyze_calls:
+            break
+        await asyncio.sleep(0.005)
+
+    await analyzer.aclose()
+    assert all(not instrument.measurements for instrument in metric_instruments.values())
+
+
+@pytest.mark.asyncio
+async def test_records_failed_analysis_metrics(
+    fake_sdk: tuple[FakeCollector, FakeNativeAnalyzer, list[int]],
+    metric_instruments: dict[str, FakeInstrument],
+) -> None:
+    native_analyzer = fake_sdk[1]
+    native_analyzer.error = RuntimeError("analysis failed")
+    analyzer = Analyzer(
+        model=cast(aic_sdk.Model, FakeModel()),
+        license_key="test-license",
+        analysis_interval=0.01,
+    )
+    analyzer.collector._process(make_frame())
+
+    for _ in range(20):
+        if native_analyzer.analyze_calls:
+            break
+        await asyncio.sleep(0.005)
+
+    await analyzer.aclose()
+    assert metric_instruments["analysis"].measurements[0] == (
+        1,
+        {"model_provider": "ai-coustics", "status": "error"},
+    )
+    assert not metric_instruments["score"].measurements
 
 
 @pytest.mark.asyncio

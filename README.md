@@ -7,11 +7,11 @@ ai-coustics SDKs and let LiveKit agents use:
 - `Processor` for speech enhancement through LiveKit's audio `FrameProcessor` interface.
 - `VAD` for voice activity detection through LiveKit Agents' streaming VAD interface.
 - `Analyzer` for periodic SDK audio-quality analysis, with a transparent collector attached through
-  LiveKit's `noise_cancellation` path.
+  LiveKit's `noise_cancellation` path, result events, and OpenTelemetry metrics.
 
 Applications choose and provision the SDK models themselves. This keeps model selection, storage,
 and deployment under application control while the plugins handle LiveKit audio formats, stream
-lifecycle, logging, and error recovery.
+lifecycle, observability, and error recovery.
 
 ## Packages
 

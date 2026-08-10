@@ -105,6 +105,11 @@ const analyzer = new Analyzer({
   analysisInterval: 5, // seconds; 5 is the default
 });
 
+analyzer.on("analysisResult", (event) => {
+  // Log it, send it to an alerting pipeline, or retain a session summary.
+  console.log(event.sequence, event.result.riskScore, event.inferenceDuration);
+});
+
 await session.start({
   // ... agent, room
   inputOptions: { noiseCancellation: analyzer.collector },
@@ -112,9 +117,27 @@ await session.start({
 ```
 
 `Collector` passes every frame through unchanged while buffering a mono copy for the SDK. The
-`Analyzer` calls `analyzeBuffered()` at the configured interval and currently logs all seven fields
-of every result. RoomIO closes the collector and its analyzer together; call `analyzer.close()`
-yourself if the collector is not owned by RoomIO.
+`Analyzer` calls `analyzeBuffered()` at the configured interval. Every successful call emits an
+`analysisResult` event. Successful results are not logged by the plugin; applications can opt in
+from the callback. The frozen event and score snapshot contain the model and stream identity,
+completion timestamp, inference duration, and a monotonically increasing sequence number. Event
+callbacks run synchronously; queue any network and database work so it does not delay the analyzer
+timer. RoomIO closes the collector and its analyzer together; call `analyzer.close()` yourself if
+the collector is not owned by RoomIO.
+
+The analyzer also records three low-cardinality OpenTelemetry instruments by default:
+
+- `ai_coustics.analyzer.analysis`, a counter with `status=ok|error`
+- `ai_coustics.analyzer.inference_duration`, a histogram in seconds with the same status
+- `ai_coustics.analyzer.score`, a histogram for every SDK score with a bounded `score.name`
+  attribute
+
+They use the process-wide `@opentelemetry/api` `MeterProvider`. LiveKit Agents for Node does not
+currently install a metrics SDK or exporter, so applications must register a provider such as
+`@opentelemetry/sdk-metrics` before creating the analyzer. Without one, the OpenTelemetry API is a
+safe no-op and events and logs still work. Set `enableMetrics: false` to disable instrumentation.
+Do not turn room, participant, or publication IDs into metric attributes; those high-cardinality
+values are available on `AnalysisEvent` for traces, alerts, and application-owned records instead.
 
 This is a temporary integration through LiveKit's single `noiseCancellation` slot. Consequently,
 the analyzer collector cannot be installed there alongside `Processor`. A future LiveKit audio-tap

@@ -25,6 +25,7 @@ dependencies = [
   "aic-sdk>=3.0.0,<4",
   "livekit-agents>=1.4.2,<2",
   "numpy>=2.0.2",
+  "opentelemetry-api>=1.14,<2",
 ]
 
 [dependency-groups]

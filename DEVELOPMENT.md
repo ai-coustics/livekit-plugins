@@ -54,8 +54,10 @@ stops scheduling and terminates the SDK telemetry session.
 
 Python schedules inference with an asyncio task and runs each blocking `analyze_buffered()` call
 through `asyncio.to_thread()`. Shutdown waits for an active inference before terminating the SDK
-session. Node uses a timer around the SDK's synchronous `analyzeBuffered()` API. Both runtimes log
-the seven `AnalysisResult` scores after every successful scheduled call; errors remain fail-open
+session. Node uses a timer around the SDK's synchronous `analyzeBuffered()` API. Both runtimes emit
+a plugin-level result event after every successful scheduled call without logging the result by
+default. They also record aggregate score, inference-duration, and success/error count instruments
+through the process-wide OpenTelemetry metrics API; operational errors remain logged and fail-open
 for the room audio path.
 
 ## Future work
@@ -145,17 +147,22 @@ graph because the current RTC frame processor runs before Agents receives the fr
 therefore share the upstream solution proposed for Processor/VAD raw-audio fan-out.
 
 Once that upstream interface exists, the plugin should create one SDK collector/analyzer pair per
-LiveKit observer stream and expose immutable analysis events. Events should include the seven scores, model and stream
-metadata, result time and accumulated audio position, inference duration, and a sequence number.
+LiveKit observer stream. The current plugin-level `analysis_result` / `analysisResult` events can
+then be attached to that observer without changing their payload shape. Events include the seven
+scores, model and stream metadata, result time, inference duration, and a sequence number; the
+upstream observer could additionally provide an authoritative accumulated audio position.
 Collection requires only PCM16-to-float32 conversion and mono downmixing; the SDK handles sample
 rate adaptation after the collector is initialized with the input rate. Analysis should be
 scheduled from accumulated audio duration, allow only one inference at a time, and replace stale
 pending work instead of building an unbounded queue. Track and format discontinuities must reset
 the SDK state, and close must terminate the analyzer telemetry session.
 
-Analysis results should use a dedicated `audio_analysis` event instead of being forced into
-LiveKit's deprecated `metrics_collected` event. Inference duration, errors, and backlog remain
-operational diagnostics and may later map to first-class analyzer metrics. If future analysis
+As a further upstream option, `AgentSession` could forward observer results through a dedicated
+`audio_analysis` event, with a new framework-owned event type and reporting hook. That would make
+analysis discoverable alongside other session observability without forcing it into LiveKit's
+deprecated `metrics_collected` event or its closed `AgentMetrics` union. LiveKit could also define
+stable analyzer metric names and Cloud dashboard treatment; until then the plugin-owned
+OpenTelemetry instruments are intentionally aggregate and backend-agnostic. If future analysis
 models use different context windows, aic-sdk should expose the model's analysis-window duration
 so the plugin does not have to hard-code the current five-second window.
 

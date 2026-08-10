@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import math
+import time
 from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Literal
 
 import aic_sdk
 import numpy as np
+from opentelemetry import metrics
 
 from livekit import rtc
 
@@ -13,6 +17,48 @@ from .log import logger
 from .processor import _license_key, _pcm16_to_float32
 
 _DEFAULT_ANALYSIS_INTERVAL = 5.0
+_METER = metrics.get_meter("ai-coustics-livekit-plugin")
+_ANALYSIS_COUNT = _METER.create_counter(
+    "ai_coustics.analyzer.analysis",
+    description="Number of ai-coustics buffered audio analyses",
+)
+_INFERENCE_DURATION = _METER.create_histogram(
+    "ai_coustics.analyzer.inference_duration",
+    unit="s",
+    description="Duration of ai-coustics buffered audio analysis",
+)
+_SCORE = _METER.create_histogram(
+    "ai_coustics.analyzer.score",
+    description="Audio analysis score produced by ai-coustics",
+)
+_METRIC_BASE_ATTRIBUTES = {"model_provider": "ai-coustics"}
+_RESULT_FIELDS = (
+    "risk_score",
+    "speaker_reverb",
+    "speaker_loudness",
+    "interfering_speech",
+    "media_speech",
+    "noise",
+    "packet_loss",
+)
+
+
+@dataclass(frozen=True)
+class AnalysisEvent:
+    """Metadata and SDK result emitted after one successful buffered analysis."""
+
+    result: aic_sdk.AnalysisResult
+    timestamp: float
+    """Unix timestamp in seconds recorded after inference completed."""
+
+    inference_duration: float
+    """Elapsed inference time in seconds."""
+
+    sequence: int
+    model_id: str
+    room_name: str | None
+    participant_identity: str | None
+    publication_sid: str | None
 
 
 class Collector(rtc.FrameProcessor[rtc.AudioFrame]):
@@ -29,6 +75,8 @@ class Collector(rtc.FrameProcessor[rtc.AudioFrame]):
         self._reset_analyzer = reset_analyzer
         self._close_analyzer = close_analyzer
         self._format: tuple[int, int, int] | None = None
+        self._stream_info: dict[str, str] = {}
+        self._has_buffered_audio = False
         self._enabled = True
         self._closed = False
 
@@ -46,7 +94,11 @@ class Collector(rtc.FrameProcessor[rtc.AudioFrame]):
 
     @property
     def initialized(self) -> bool:
-        return self._format is not None and self._collector is not None
+        return self._has_buffered_audio and self._collector is not None
+
+    @property
+    def stream_info(self) -> dict[str, str]:
+        return self._stream_info.copy()
 
     def _on_stream_info_updated(
         self,
@@ -55,14 +107,21 @@ class Collector(rtc.FrameProcessor[rtc.AudioFrame]):
         participant_identity: str,
         publication_sid: str,
     ) -> None:
+        self._stream_info = {
+            "room_name": room_name,
+            "participant_identity": participant_identity,
+            "publication_sid": publication_sid,
+        }
         self._reset()
 
     def _on_stream_info_cleared(self) -> None:
+        self._stream_info = {}
         self._reset()
 
     def _reset(self) -> None:
         if self._closed:
             return
+        self._has_buffered_audio = False
         try:
             self._reset_analyzer()
         except Exception as error:
@@ -103,6 +162,7 @@ class Collector(rtc.FrameProcessor[rtc.AudioFrame]):
                 else channels.mean(axis=1, dtype=np.float32)
             )
             collector.buffer(mono)
+            self._has_buffered_audio = True
         except Exception:
             logger.exception("ai-coustics Collector failed; passing audio through")
 
@@ -112,6 +172,8 @@ class Collector(rtc.FrameProcessor[rtc.AudioFrame]):
         self._closed = True
         self._enabled = False
         self._format = None
+        self._stream_info = {}
+        self._has_buffered_audio = False
         self._collector = None
 
     def _close(self) -> None:
@@ -121,7 +183,7 @@ class Collector(rtc.FrameProcessor[rtc.AudioFrame]):
         self._close_analyzer()
 
 
-class Analyzer:
+class Analyzer(rtc.EventEmitter[Literal["analysis_result"]]):
     """Periodically analyzes audio buffered by a transparent LiveKit Collector."""
 
     def __init__(
@@ -130,7 +192,9 @@ class Analyzer:
         model: aic_sdk.Model,
         license_key: str | None = None,
         analysis_interval: float = _DEFAULT_ANALYSIS_INTERVAL,
+        enable_metrics: bool = True,
     ) -> None:
+        super().__init__()
         if not math.isfinite(analysis_interval) or analysis_interval <= 0.0:
             raise ValueError("analysis_interval must be a finite value greater than zero")
 
@@ -144,12 +208,16 @@ class Analyzer:
         resolved_license_key = _license_key(license_key)
         aic_sdk.set_sdk_id(8)  # type: ignore[attr-defined]
         try:
+            model_id = model.get_id()
             native_collector, native_analyzer = aic_sdk.analyzer_pair(model, resolved_license_key)
         except Exception as error:
             raise RuntimeError(f"Failed to create ai-coustics Analyzer: {error}") from error
 
         self._native_analyzer: aic_sdk.Analyzer | None = native_analyzer
+        self._model_id = model_id
         self._analysis_interval = analysis_interval
+        self._enable_metrics = enable_metrics
+        self._sequence = 0
         self._closed = False
         self._close_event = asyncio.Event()
         self._close_task: asyncio.Task[None] | None = None
@@ -171,21 +239,57 @@ class Analyzer:
             logger.exception("Failed to terminate ai-coustics Analyzer session")
 
     async def _analyze_once(self, native_analyzer: aic_sdk.Analyzer) -> None:
-        result = await asyncio.to_thread(native_analyzer.analyze_buffered)
+        started = time.perf_counter()
+        try:
+            result = await asyncio.to_thread(native_analyzer.analyze_buffered)
+        except Exception:
+            inference_duration = time.perf_counter() - started
+            self._record_analysis_metrics(inference_duration, status="error")
+            raise
 
-        logger.info(
-            "ai-coustics analysis result",
-            extra={
-                "model_provider": "ai-coustics",
-                "risk_score": result.risk_score,
-                "speaker_reverb": result.speaker_reverb,
-                "speaker_loudness": result.speaker_loudness,
-                "interfering_speech": result.interfering_speech,
-                "media_speech": result.media_speech,
-                "noise": result.noise,
-                "packet_loss": result.packet_loss,
-            },
+        inference_duration = time.perf_counter() - started
+        self._sequence += 1
+        stream_info = self.collector.stream_info
+        event = AnalysisEvent(
+            result=result,
+            timestamp=time.time(),
+            inference_duration=inference_duration,
+            sequence=self._sequence,
+            model_id=self._model_id,
+            room_name=stream_info.get("room_name"),
+            participant_identity=stream_info.get("participant_identity"),
+            publication_sid=stream_info.get("publication_sid"),
         )
+
+        self._record_analysis_metrics(inference_duration, status="ok", result=result)
+
+        try:
+            self.emit("analysis_result", event)
+        except Exception:
+            logger.exception("Failed to emit ai-coustics analysis result event")
+
+    def _record_analysis_metrics(
+        self,
+        inference_duration: float,
+        *,
+        status: str,
+        result: aic_sdk.AnalysisResult | None = None,
+    ) -> None:
+        if not self._enable_metrics:
+            return
+
+        try:
+            attributes = {**_METRIC_BASE_ATTRIBUTES, "status": status}
+            _ANALYSIS_COUNT.add(1, attributes=attributes)
+            _INFERENCE_DURATION.record(inference_duration, attributes=attributes)
+            if result is not None:
+                for score_name in _RESULT_FIELDS:
+                    _SCORE.record(
+                        getattr(result, score_name),
+                        attributes={**_METRIC_BASE_ATTRIBUTES, "score.name": score_name},
+                    )
+        except Exception:
+            logger.exception("Failed to record ai-coustics Analyzer metrics")
 
     async def _analysis_loop(self) -> None:
         native_analyzer = self._native_analyzer

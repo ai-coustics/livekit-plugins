@@ -1,9 +1,12 @@
 export {
   Analyzer,
+  type AnalysisEvent,
+  type AnalyzerCallbacks,
   type AnalyzerOptions,
   Collector,
 } from "./analyzer.js";
 export {
+  type AnalysisResult,
   Model,
   ProcessorParameter,
 } from "./sdk.js";

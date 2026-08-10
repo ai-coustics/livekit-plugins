@@ -3,7 +3,7 @@ from importlib.metadata import PackageNotFoundError, version
 from aic_sdk import Model, ProcessorParameter
 from livekit.agents import Plugin
 
-from .analyzer import Analyzer, Collector
+from .analyzer import AnalysisEvent, Analyzer, Collector
 from .log import logger
 from .processor import Processor
 from .processor_context import ProcessorContext
@@ -24,6 +24,7 @@ Plugin.register_plugin(AICousticsPlugin())
 
 __all__ = [
     "AICousticsPlugin",
+    "AnalysisEvent",
     "Analyzer",
     "Collector",
     "Model",
