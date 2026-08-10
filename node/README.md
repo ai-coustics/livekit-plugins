@@ -14,6 +14,40 @@ npm install @ai-coustics/livekit-plugin
 export AIC_SDK_LICENSE=...
 ```
 
+## Migrating from the official LiveKit plugin
+
+Replace the package import and update the following APIs:
+
+| Official LiveKit plugin | This package |
+| --- | --- |
+| `audioEnhancement(...)` | `new Processor({ model })` |
+| `EnhancerModel.*` | An SDK `Model` loaded from a provisioned model file |
+| `modelParameters` or `updateModelParameters(...)` | `processor.getContext().setParameter(...)` |
+| `vad()` and `vadSettings` | `new VAD({ model, vadParameters })` |
+| `Auth.livekitCloud()` or `Auth.aiCousticsApi(...)` | `AIC_SDK_LICENSE` or `licenseKey` |
+
+Before:
+
+```ts
+import * as aic from "@livekit/plugins-ai-coustics";
+
+const processor = aic.audioEnhancement({ model: aic.EnhancerModel.QuailL });
+const vad = aic.vad();
+```
+
+After loading the SDK models as described below:
+
+```ts
+import { Processor, VAD } from "@ai-coustics/livekit-plugin";
+
+const processor = new Processor({ model: enhancementModel });
+const vad = new VAD({ model: vadModel });
+```
+
+Unlike the official VAD, this package's VAD runs a dedicated SDK VAD model and does not depend on
+Processor metadata. Provision a separate VAD model if you use it. LiveKit Cloud authentication is
+not carried over; obtain an ai-coustics SDK license before migrating.
+
 ## Model provisioning
 
 Download models during deployment or container setup:

@@ -18,8 +18,9 @@ lifecycle, logging, and error recovery.
 | Python | `ai-coustics-livekit-plugin` | [Installation and usage](python/README.md) |
 | Node.js | `@ai-coustics/livekit-plugin` | [Installation and usage](node/README.md) |
 
-The runtime guides cover model provisioning, AgentSession integration, Processor enhancement
-settings, VAD parameters, authentication, and operational constraints.
+The runtime guides cover migration from the official plugins, model provisioning, AgentSession
+integration, Processor enhancement settings, VAD parameters, authentication, and operational
+constraints.
 
 > These packages replace LiveKit's official `livekit-plugins-ai-coustics` and
 > `@livekit/plugins-ai-coustics` packages; they are not extensions of them. Uninstall the official

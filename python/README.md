@@ -14,6 +14,38 @@ pip install ai-coustics-livekit-plugin
 export AIC_SDK_LICENSE=...
 ```
 
+## Migrating from the official LiveKit plugin
+
+The Python import remains `livekit.plugins.ai_coustics`, but the public APIs are different:
+
+| Official LiveKit plugin | This package |
+| --- | --- |
+| `audio_enhancement(...)` | `Processor(model=...)` |
+| `EnhancerModel.*` | An SDK `Model` loaded from a provisioned model file |
+| `ModelParameters` or `update_model_parameters(...)` | `processor.get_context().set_parameter(...)` |
+| `VAD()` and `VadSettings` | `VAD(model=..., vad_parameters=VADParameters(...))` |
+| `Auth.livekit_cloud()` or `Auth.ai_coustics_api(...)` | `AIC_SDK_LICENSE` or `license_key=` |
+
+Before:
+
+```python
+processor = ai_coustics.audio_enhancement(
+    model=ai_coustics.EnhancerModel.QUAIL_L,
+)
+vad = ai_coustics.VAD()
+```
+
+After loading the SDK models as described below:
+
+```python
+processor = ai_coustics.Processor(model=enhancement_model)
+vad = ai_coustics.VAD(model=vad_model)
+```
+
+Unlike the official VAD, this package's VAD runs a dedicated SDK VAD model and does not depend on
+Processor metadata. Provision a separate VAD model if you use it. LiveKit Cloud authentication is
+not carried over; obtain an ai-coustics SDK license before migrating.
+
 ## Model provisioning
 
 Download models during deployment or container setup:
