@@ -6,7 +6,14 @@ import * as path from "node:path";
 import { inflateSync } from "node:zlib";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { Model, Processor, ProcessorParameter, VAD } from "../src/index.js";
+import {
+  type AnalysisEvent,
+  Analyzer,
+  Model,
+  Processor,
+  ProcessorParameter,
+  VAD,
+} from "../src/index.js";
 
 initializeLogger({ pretty: false, level: "silent" });
 
@@ -15,6 +22,8 @@ const modelId =
   process.env.AIC_INTEGRATION_MODEL_ID ?? "quail-vf-2.2-s-16khz";
 const vadModelId =
   process.env.AIC_INTEGRATION_VAD_MODEL_ID ?? "vad-2.1-xxs-16khz";
+const analysisModelId =
+  process.env.AIC_INTEGRATION_ANALYSIS_MODEL_ID ?? "tyto-1.1-l-16khz";
 const modelDir =
   process.env.AIC_INTEGRATION_MODEL_DIR ??
   path.join(os.homedir(), ".cache", "aic-sdk", "models");
@@ -204,5 +213,51 @@ describeIf("native VAD integration", () => {
     );
     const speechBytes = Buffer.from(speech.buffer, speech.byteOffset, speech.byteLength);
     expect(bufferedBytes.indexOf(speechBytes)).toBeGreaterThanOrEqual(0);
+  }, 120_000);
+});
+
+describeIf("native Analyzer integration", () => {
+  let model: ReturnType<typeof Model.fromFile>;
+
+  beforeAll(() => {
+    fs.mkdirSync(modelDir, { recursive: true });
+    model = Model.fromFile(Model.download(analysisModelId, modelDir));
+  });
+
+  it("emits the current SDK result schema", async () => {
+    const analyzer = new Analyzer({ model, analysisInterval: 0.01 });
+
+    try {
+      const resultPromise = new Promise<AnalysisEvent>((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error("Timed out waiting for analyzer result")),
+          30_000,
+        );
+        analyzer.once("analysisResult", (event) => {
+          clearTimeout(timeout);
+          resolve(event);
+        });
+      });
+
+      for (let index = 0; index < 120; index += 1) {
+        analyzer.collector.process(frame(index));
+      }
+
+      const event = await resultPromise;
+      const scores = {
+        riskScore: event.result.riskScore,
+        speakerReverb: event.result.speakerReverb,
+        speakerLoudness: event.result.speakerLoudness,
+        interferingSpeech: event.result.interferingSpeech,
+        noise: event.result.noise,
+        codecDegradation: event.result.codecDegradation,
+        packetLoss: event.result.packetLoss,
+      };
+      expect(Object.values(scores).every((score) => score >= 0 && score <= 1)).toBe(
+        true,
+      );
+    } finally {
+      analyzer.close();
+    }
   }, 120_000);
 });

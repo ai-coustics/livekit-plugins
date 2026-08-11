@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
 import zlib
@@ -16,6 +17,7 @@ pytestmark = pytest.mark.integration
 LICENSE = os.getenv("AIC_SDK_LICENSE")
 MODEL_ID = os.getenv("AIC_INTEGRATION_MODEL_ID", "quail-vf-2.2-s-16khz")
 VAD_MODEL_ID = os.getenv("AIC_INTEGRATION_VAD_MODEL_ID", "vad-2.1-xxs-16khz")
+ANALYSIS_MODEL_ID = os.getenv("AIC_INTEGRATION_ANALYSIS_MODEL_ID", "tyto-1.1-l-16khz")
 MODEL_DIR = Path(os.getenv("AIC_INTEGRATION_MODEL_DIR", "~/.cache/aic-sdk/models")).expanduser()
 SAMPLE_RATE = 16000
 SAMPLES_PER_FRAME = 800  # LiveKit Agents' current 50 ms default input frame.
@@ -62,6 +64,13 @@ def model() -> ai_coustics.Model:
 def vad_model() -> ai_coustics.Model:
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     model_path = ai_coustics.Model.download(VAD_MODEL_ID, MODEL_DIR)
+    return ai_coustics.Model.from_file(model_path)
+
+
+@pytest.fixture(scope="module")
+def analysis_model() -> ai_coustics.Model:
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    model_path = ai_coustics.Model.download(ANALYSIS_MODEL_ID, MODEL_DIR)
     return ai_coustics.Model.from_file(model_path)
 
 
@@ -184,3 +193,38 @@ async def test_real_vad_stream_detects_and_buffers_recorded_speech(
     assert all(frame.sample_rate == SAMPLE_RATE for frame in ends[0].frames)
     buffered_speech = b"".join(bytes(frame.data) for frame in ends[0].frames)
     assert speech.tobytes() in buffered_speech
+
+
+@pytest.mark.skipif(not LICENSE, reason="AIC_SDK_LICENSE is required")
+@pytest.mark.asyncio
+async def test_real_analyzer_emits_current_sdk_result_schema(
+    analysis_model: ai_coustics.Model,
+) -> None:
+    analyzer = ai_coustics.Analyzer(model=analysis_model, analysis_interval=0.01)
+    result_future: asyncio.Future[ai_coustics.AnalysisEvent] = (
+        asyncio.get_running_loop().create_future()
+    )
+
+    @analyzer.on("analysis_result")
+    def on_analysis(event: ai_coustics.AnalysisEvent) -> None:
+        if not result_future.done():
+            result_future.set_result(event)
+
+    try:
+        for index in range(120):  # Six seconds; the current model analyzes five-second windows.
+            analyzer.collector._process(_frame(index))
+
+        event = await asyncio.wait_for(result_future, timeout=30.0)
+    finally:
+        await analyzer.aclose()
+
+    scores = {
+        "risk_score": event.result.risk_score,
+        "speaker_reverb": event.result.speaker_reverb,
+        "speaker_loudness": event.result.speaker_loudness,
+        "interfering_speech": event.result.interfering_speech,
+        "noise": event.result.noise,
+        "codec_degradation": event.result.codec_degradation,
+        "packet_loss": event.result.packet_loss,
+    }
+    assert all(0.0 <= score <= 1.0 for score in scores.values())

@@ -12,6 +12,7 @@ import pytest
 
 from livekit import rtc
 from livekit.plugins.ai_coustics import AnalysisEvent, Analyzer, Collector
+from livekit.plugins.ai_coustics.analyzer import _RESULT_FIELDS
 
 
 class FakeModel:
@@ -25,8 +26,8 @@ class FakeResult:
     speaker_reverb: float = 0.2
     speaker_loudness: float = 0.3
     interfering_speech: float = 0.4
-    media_speech: float = 0.5
-    noise: float = 0.6
+    noise: float = 0.5
+    codec_degradation: float = 0.6
     packet_loss: float = 0.7
 
 
@@ -123,6 +124,14 @@ def make_frame(*, channels: int = 1) -> rtc.AudioFrame:
         num_channels=channels,
         samples_per_channel=4,
     )
+
+
+def test_metric_fields_exist_on_installed_sdk_analysis_result() -> None:
+    missing_fields = [
+        field for field in _RESULT_FIELDS if not hasattr(aic_sdk.AnalysisResult, field)
+    ]
+
+    assert not missing_fields, f"Analyzer metric fields missing from aic-sdk: {missing_fields}"
 
 
 @pytest.mark.asyncio

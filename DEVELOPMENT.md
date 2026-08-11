@@ -186,14 +186,14 @@ class AudioAnalysisMetrics(_BaseMetrics):
     speaker_reverb: float
     speaker_loudness: float
     interfering_speech: float
-    media_speech: float
     noise: float
+    codec_degradation: float
     packet_loss: float
     window_duration: float | None = None
     metadata: Metadata | None = None
 ```
 
-The current SDK has `media_speech` and `noise`, but no `codec_degradation` result. A Tyto analysis
+The current SDK has `codec_degradation` and `noise`, but no `media_speech` result. A Tyto analysis
 window is continuous room audio and is not naturally associated with an AgentSession `speech_id`.
 The streaming SDK determines its window length from the model but does not expose that duration,
 so `window_duration` must remain optional until aic-sdk provides it. If future analysis models use
