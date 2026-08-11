@@ -37,6 +37,7 @@ class _InferenceResult:
     probability: float
     detected: bool
     sensitivity: float
+    speech_hold_duration: float
     minimum_speech_duration: float
     inference_duration: float
     prediction_delay_samples: int
@@ -220,6 +221,9 @@ class VADProcessor(rtc.FrameProcessor[rtc.AudioFrame]):
                     probability=context.raw_vad_probability(),
                     detected=context.is_speech_detected(),
                     sensitivity=context.get_parameter(aic_sdk.VadParameter.Sensitivity),
+                    speech_hold_duration=context.get_parameter(
+                        aic_sdk.VadParameter.SpeechHoldDuration
+                    ),
                     minimum_speech_duration=context.get_parameter(
                         aic_sdk.VadParameter.MinimumSpeechDuration
                     ),
@@ -625,7 +629,13 @@ class VADStream(agents.vad.VADStream):
                             raw_accumulated_speech=aligned_raw_speech_duration,
                         )
                     )
-                elif not result.detected and speaking:
+                # The SDK hold is a rolling-majority window, so short utterances can make
+                # detected drop before a full hold interval of raw silence has elapsed.
+                elif (
+                    not result.detected
+                    and speaking
+                    and aligned_raw_silence_duration >= result.speech_hold_duration
+                ):
                     speaking = False
                     silence_duration = aligned_raw_silence_duration
                     completed_speech_duration = max(0.0, speech_duration - silence_duration)

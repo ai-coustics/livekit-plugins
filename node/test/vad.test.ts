@@ -270,6 +270,7 @@ describe("VAD", () => {
     const vad = new VAD({
       model: new sdk.FakeModel(),
       licenseKey: "test-license",
+      vadParameters: { speechHoldDuration: 0.01 },
     });
     const stream = vad.stream();
     const native = sdk.instances[0]!;
@@ -313,11 +314,38 @@ describe("VAD", () => {
     expect(native.terminateCalls).toBe(0);
   });
 
+  it("enforces the default silence floor after short speech", async () => {
+    const vad = new VAD({
+      model: new sdk.FakeModel(),
+      licenseKey: "test-license",
+    });
+    const stream = vad.stream();
+    const native = sdk.instances[0]!;
+    native.predictions.push([0.9, true], ...Array(25).fill([0.1, false]));
+
+    pushProcessed(vad, stream, makeFrame(new Int16Array(26 * 160)));
+    const events = await collectEvents(stream);
+
+    const inferenceEvents = events.filter(
+      (event) => event.type === VADEventType.INFERENCE_DONE,
+    );
+    const endEvents = events.filter(
+      (event) => event.type === VADEventType.END_OF_SPEECH,
+    );
+    expect(endEvents).toHaveLength(1);
+    expect(inferenceEvents.slice(1).every((event) => event.speaking)).toBe(true);
+    expect(inferenceEvents.at(-1)!.rawAccumulatedSilence).toBeCloseTo(250);
+    expect(endEvents[0]!.silenceDuration).toBeCloseTo(250);
+  });
+
   it("uses the input sample rate and accounts for the SDK prediction delay", async () => {
     const vad = new VAD({
       model: new sdk.FakeModel(),
       licenseKey: "test-license",
-      vadParameters: { minimumSpeechDuration: 0.02 },
+      vadParameters: {
+        speechHoldDuration: 0.03,
+        minimumSpeechDuration: 0.02,
+      },
       prefixPaddingDuration: 0,
     });
     const stream = vad.stream();
