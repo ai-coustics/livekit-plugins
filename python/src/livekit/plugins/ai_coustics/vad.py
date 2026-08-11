@@ -10,7 +10,7 @@ import numpy as np
 
 from livekit import agents, rtc
 
-from .log import log_async_exceptions, log_fields, logger
+from .log import log_fields, logger
 from .processor import _license_key, _pcm16_to_float32
 
 _FRAME_USERDATA_VAD_ATTRIBUTE = "ai_coustics.vad"
@@ -238,20 +238,34 @@ class VADProcessor(rtc.FrameProcessor[rtc.AudioFrame]):
                 self._last_slow_warning = completed
                 logger.warning(
                     "VAD: inference falling behind realtime",
-                    extra=log_fields(
-                        "vad",
+                    extra=self._diagnostic_fields(
                         inference_duration=inference_duration,
                         block_duration=block_duration,
                         realtime_factor=inference_duration / block_duration,
                         processing_backlog=self._processing_backlog,
                         sample_rate=frame.sample_rate,
                         block_size=inference_block_size,
-                        model_name=self._model_id,
-                        model_provider="ai-coustics",
                     ),
                 )
 
         return results
+
+    def _diagnostic_fields(self, **fields: object) -> dict[str, object]:
+        diagnostics: dict[str, object] = log_fields(
+            "vad",
+            model_provider="ai-coustics",
+            model_name=self._model_id,
+            **self._stream_info,
+        )
+        if self._format is not None:
+            diagnostics.update(
+                {
+                    "sample_rate": self._format[0],
+                    "block_size": self._format[1],
+                }
+            )
+        diagnostics.update(fields)
+        return diagnostics
 
     def _close(self) -> None:
         if self._closed:
@@ -263,7 +277,17 @@ class VADProcessor(rtc.FrameProcessor[rtc.AudioFrame]):
         self._context = None
         self._inference_buffer.clear()
         if native_vad is not None:
-            native_vad.terminate_session()
+            try:
+                native_vad.terminate_session()
+            except Exception as error:
+                logger.error(
+                    "VAD: session termination failed",
+                    extra=self._diagnostic_fields(
+                        error_type=type(error).__name__,
+                        error_message=str(error),
+                    ),
+                    exc_info=(type(error), error, error.__traceback__),
+                )
 
 
 class VAD(agents.vad.VAD):
@@ -331,7 +355,6 @@ class VAD(agents.vad.VAD):
         stream = VADStream(
             self,
             processor=self._processor,
-            model_id=self._model_id,
             prefix_padding_duration=self._prefix_padding_duration,
             max_buffered_speech=self._max_buffered_speech,
         )
@@ -367,15 +390,13 @@ class VAD(agents.vad.VAD):
         except Exception as error:
             logger.warning(
                 "VAD: parameter rejected; keeping the current value",
-                extra=log_fields(
-                    "vad",
-                    model_name=self._model_id,
-                    model_provider="ai-coustics",
+                extra=self._processor._diagnostic_fields(
                     parameter=name,
                     parameter_value=value,
                     error_type=type(error).__name__,
                     error_message=str(error),
                 ),
+                exc_info=(type(error), error, error.__traceback__),
             )
             return False
         return True
@@ -387,19 +408,30 @@ class VADStream(agents.vad.VADStream):
         vad: VAD,
         *,
         processor: VADProcessor,
-        model_id: str,
         prefix_padding_duration: float,
         max_buffered_speech: float,
     ) -> None:
         self._processor = processor
-        self._model_id = model_id
         self._prefix_padding_duration = prefix_padding_duration
         self._max_buffered_speech = max_buffered_speech
         self._missing_metadata_frames = 0
         super().__init__(vad)
 
-    @log_async_exceptions("vad", "VAD: stream failed")
     async def _main_task(self) -> None:
+        try:
+            await self._run_main_task()
+        except Exception as error:
+            logger.error(
+                "VAD: stream failed",
+                extra=self._processor._diagnostic_fields(
+                    error_type=type(error).__name__,
+                    error_message=str(error),
+                ),
+                exc_info=(type(error), error, error.__traceback__),
+            )
+            raise
+
+    async def _run_main_task(self) -> None:
         input_sample_rate = 0
         prefix_frames: deque[rtc.AudioFrame] = deque()
         prefix_samples = 0
@@ -465,9 +497,7 @@ class VADStream(agents.vad.VADStream):
                 speech_buffer_full = True
                 logger.warning(
                     "VAD: maximum buffered speech reached; ignoring further audio",
-                    extra=log_fields(
-                        "vad",
-                        model_name=self._model_id,
+                    extra=self._processor._diagnostic_fields(
                         max_buffered_speech=self._max_buffered_speech,
                     ),
                 )
@@ -498,7 +528,9 @@ class VADStream(agents.vad.VADStream):
                     logger.error(
                         "VAD: no inference metadata found; pass vad.processor as RoomIO "
                         "noise_cancellation (or place it first in FrameProcessorChain)",
-                        extra=log_fields("vad", model_name=self._model_id),
+                        extra=self._processor._diagnostic_fields(
+                            missing_metadata_frames=self._missing_metadata_frames,
+                        ),
                     )
                 continue
             self._missing_metadata_frames = 0
@@ -511,9 +543,7 @@ class VADStream(agents.vad.VADStream):
                 elif result.sample_rate != input_sample_rate:
                     logger.error(
                         "VAD: received frame with a different sample rate",
-                        extra=log_fields(
-                            "vad",
-                            model_name=self._model_id,
+                        extra=self._processor._diagnostic_fields(
                             sample_rate=input_sample_rate,
                             received_sample_rate=result.sample_rate,
                         ),

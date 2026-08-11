@@ -255,6 +255,8 @@ describe("VAD", () => {
       expect.objectContaining({
         plugin: "ai-coustics",
         component: "vad",
+        modelProvider: "ai-coustics",
+        modelName: "vad-test-model",
         parameter: "sensitivity",
         parameterValue: 2,
         errorMessage: "SDK rejected parameter",
@@ -478,6 +480,40 @@ describe("VAD", () => {
     );
   });
 
+  it("logs missing metadata with the standard VAD context", async () => {
+    const vad = new VAD({
+      model: new sdk.FakeModel(),
+      licenseKey: "test-license",
+    });
+    vad.processor.onStreamInfoUpdated({
+      roomName: "room",
+      participantIdentity: "participant",
+      publicationSid: "TR_test",
+    });
+    const stream = vad.stream();
+    const errorLog = vi.spyOn(log(), "error");
+
+    for (let index = 0; index < 10; index += 1) {
+      stream.pushFrame(makeFrame(new Int16Array(160)));
+    }
+    await collectEvents(stream);
+
+    expect(errorLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        plugin: "ai-coustics",
+        component: "vad",
+        modelProvider: "ai-coustics",
+        modelName: "vad-test-model",
+        roomName: "room",
+        participantIdentity: "participant",
+        publicationSid: "TR_test",
+        missingMetadataFrames: 10,
+      }),
+      expect.stringContaining("VAD: no inference metadata found"),
+    );
+    errorLog.mockRestore();
+  });
+
   it("runs VAD on original audio before a downstream processor replaces it", async () => {
     const vad = new VAD({
       model: new sdk.FakeModel(16_000, 4),
@@ -539,12 +575,28 @@ describe("VAD", () => {
     const stream = vad.stream();
     const native = sdk.instances[0]!;
     native.processError = new Error("native failure");
+    const errorLog = vi.spyOn(log(), "error");
     pushProcessed(vad, stream, makeFrame(new Int16Array(480), 48_000));
 
     await expect(collectEvents(stream)).rejects.toThrow(
       "ai-coustics VAD inference failed (model=vad-test-model, sampleRate=48000, blockSize=480): native failure",
     );
     expect(native.terminateCalls).toBe(0);
+    expect(errorLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        plugin: "ai-coustics",
+        component: "vad",
+        modelProvider: "ai-coustics",
+        modelName: "vad-test-model",
+        sampleRate: 48_000,
+        blockSize: 480,
+        errorType: "Error",
+        errorMessage: expect.stringContaining("native failure"),
+        error: expect.any(Error),
+      }),
+      "VAD: stream failed",
+    );
+    errorLog.mockRestore();
   });
 
   it.each([

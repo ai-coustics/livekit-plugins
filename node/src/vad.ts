@@ -178,7 +178,22 @@ export class VADProcessor extends FrameProcessor<AudioFrame> {
     this.nativeVad = null;
     this.context = null;
     this.inferenceBuffer = new Int16Array(0);
-    nativeVad?.terminateSession();
+    if (nativeVad) {
+      try {
+        nativeVad.terminateSession();
+      } catch (error) {
+        writeLog(
+          "error",
+          "vad",
+          "session termination failed",
+          this.diagnosticFields({
+            errorType: error instanceof Error ? error.name : typeof error,
+            errorMessage: errorDetail(error),
+          }),
+          error,
+        );
+      }
+    }
   }
 
   private processFrame(frame: AudioFrame): readonly InferenceResult[] {
@@ -280,20 +295,33 @@ export class VADProcessor extends FrameProcessor<AudioFrame> {
           "warn",
           "vad",
           "inference falling behind realtime",
-          {
+          this.diagnosticFields({
             inferenceDurationMs,
             blockDurationMs,
             realtimeFactor: inferenceDurationMs / blockDurationMs,
             processingBacklogMs: this.processingBacklogMs,
             sampleRate: frame.sampleRate,
             blockSize: inferenceBlockSize,
-            modelName: this.modelId,
-            modelProvider: "ai-coustics",
-          },
+          }),
         );
       }
     }
     return results;
+  }
+
+  diagnosticFields(fields: Record<string, unknown> = {}): Record<string, unknown> {
+    const diagnostics: Record<string, unknown> = {
+      modelProvider: "ai-coustics",
+      modelName: this.modelId,
+    };
+    if (this.streamInfo) Object.assign(diagnostics, this.streamInfo);
+    if (this.format) {
+      Object.assign(diagnostics, {
+        sampleRate: this.format[0],
+        blockSize: this.format[1],
+      });
+    }
+    return Object.assign(diagnostics, fields);
   }
 }
 
@@ -359,7 +387,6 @@ export class VAD extends LiveKitVAD {
   override stream(): LiveKitVADStream {
     const stream = new AicVADStream(this, {
       processor: this.sharedProcessor,
-      modelId: this.modelId,
       prefixPaddingDuration: this.prefixPaddingDuration,
       maxBufferedSpeech: this.maxBufferedSpeech,
     });
@@ -414,14 +441,12 @@ export class VAD extends LiveKitVAD {
         "warn",
         "vad",
         "parameter rejected; keeping the current value",
-        {
-          modelProvider: "ai-coustics",
-          modelName: this.modelId,
+        this.sharedProcessor.diagnosticFields({
           parameter: name,
           parameterValue: value,
           errorType: error instanceof Error ? error.name : typeof error,
           errorMessage: errorDetail(error),
-        },
+        }),
         error,
       );
       return false;
@@ -432,13 +457,12 @@ export class VAD extends LiveKitVAD {
 
 interface StreamOptions {
   processor: VADProcessor;
-  modelId: string;
   prefixPaddingDuration: number;
   maxBufferedSpeech: number;
 }
 
 class AicVADStream extends LiveKitVADStream {
-  private readonly modelId: string;
+  private readonly processor: VADProcessor;
   private readonly prefixPaddingDuration: number;
   private readonly maxBufferedSpeech: number;
   private outputFinished = false;
@@ -447,7 +471,7 @@ class AicVADStream extends LiveKitVADStream {
 
   constructor(vad: VAD, options: StreamOptions) {
     super(vad);
-    this.modelId = options.modelId;
+    this.processor = options.processor;
     this.prefixPaddingDuration = options.prefixPaddingDuration;
     this.maxBufferedSpeech = options.maxBufferedSpeech;
     void this.pump()
@@ -458,7 +482,10 @@ class AicVADStream extends LiveKitVADStream {
           "error",
           "vad",
           "stream failed",
-          { modelName: this.modelId, errorMessage: errorDetail(error) },
+          this.processor.diagnosticFields({
+            errorType: error instanceof Error ? error.name : typeof error,
+            errorMessage: errorDetail(error),
+          }),
           error,
         );
         await this.finishOutput();
@@ -571,7 +598,9 @@ class AicVADStream extends LiveKitVADStream {
           "warn",
           "vad",
           "maximum buffered speech reached; ignoring further audio",
-          { modelName: this.modelId, maxBufferedSpeechMs: this.maxBufferedSpeech },
+          this.processor.diagnosticFields({
+            maxBufferedSpeechMs: this.maxBufferedSpeech,
+          }),
         );
       }
     };
@@ -607,7 +636,9 @@ class AicVADStream extends LiveKitVADStream {
             "vad",
             "no inference metadata found; pass vad.processor as RoomIO " +
               "noiseCancellation (or place it first in FrameProcessorChain)",
-            { modelName: this.modelId },
+            this.processor.diagnosticFields({
+              missingMetadataFrames: this.missingMetadataFrames,
+            }),
           );
         }
         continue;
@@ -624,11 +655,10 @@ class AicVADStream extends LiveKitVADStream {
             "error",
             "vad",
             "received frame with a different sample rate",
-            {
-              modelName: this.modelId,
+            this.processor.diagnosticFields({
               sampleRate: inputSampleRate,
               receivedSampleRate: result.sampleRate,
-            },
+            }),
           );
           continue;
         }

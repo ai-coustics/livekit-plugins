@@ -215,6 +215,8 @@ def test_rejected_parameter_warns_and_does_not_block_other_updates(
     )
     assert warning.plugin == "ai-coustics"  # type: ignore[attr-defined]
     assert warning.component == "vad"  # type: ignore[attr-defined]
+    assert warning.model_provider == "ai-coustics"  # type: ignore[attr-defined]
+    assert warning.model_name == "vad-test-model"  # type: ignore[attr-defined]
     assert warning.parameter == "sensitivity"  # type: ignore[attr-defined]
     assert warning.error_message == "SDK rejected parameter"  # type: ignore[attr-defined]
 
@@ -429,7 +431,9 @@ async def test_warns_for_sustained_inference_backlog_with_structured_context(
 
 
 @pytest.mark.asyncio
-async def test_inference_error_includes_model_and_audio_format() -> None:
+async def test_inference_error_includes_model_and_audio_format(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     vad = create_vad(model=FakeModel(sample_rate=48000, block_size=480))
     stream = vad.stream()
     native = FakeVad.instances[0]
@@ -449,6 +453,16 @@ async def test_inference_error_includes_model_and_audio_format() -> None:
 
     assert exc_info.value.__cause__ is sdk_error
     assert native.terminate_calls == 0
+    failure = next(record for record in caplog.records if record.message == "VAD: stream failed")
+    assert failure.plugin == "ai-coustics"  # type: ignore[attr-defined]
+    assert failure.component == "vad"  # type: ignore[attr-defined]
+    assert failure.model_provider == "ai-coustics"  # type: ignore[attr-defined]
+    assert failure.model_name == "vad-test-model"  # type: ignore[attr-defined]
+    assert failure.sample_rate == 48000  # type: ignore[attr-defined]
+    assert failure.block_size == 480  # type: ignore[attr-defined]
+    assert failure.error_type == "RuntimeError"  # type: ignore[attr-defined]
+    assert failure.error_message.endswith("native failure")  # type: ignore[attr-defined]
+    assert failure.exc_info is not None
 
 
 @pytest.mark.asyncio
@@ -575,6 +589,35 @@ async def test_multiple_streams_share_one_inference_result() -> None:
     assert [event.probability for event in first_events] == [
         event.probability for event in second_events
     ]
+
+
+@pytest.mark.asyncio
+async def test_missing_metadata_log_uses_standard_vad_context(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    vad = create_vad()
+    vad.processor._on_stream_info_updated(
+        room_name="room",
+        participant_identity="participant",
+        publication_sid="TR_test",
+    )
+    stream = vad.stream()
+
+    for _ in range(10):
+        stream.push_frame(make_frame(np.zeros(160, dtype=np.int16)))
+    await collect_events(stream)
+
+    error = next(
+        record for record in caplog.records if "no inference metadata found" in record.message
+    )
+    assert error.plugin == "ai-coustics"  # type: ignore[attr-defined]
+    assert error.component == "vad"  # type: ignore[attr-defined]
+    assert error.model_provider == "ai-coustics"  # type: ignore[attr-defined]
+    assert error.model_name == "vad-test-model"  # type: ignore[attr-defined]
+    assert error.room_name == "room"  # type: ignore[attr-defined]
+    assert error.participant_identity == "participant"  # type: ignore[attr-defined]
+    assert error.publication_sid == "TR_test"  # type: ignore[attr-defined]
+    assert error.missing_metadata_frames == 10  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
