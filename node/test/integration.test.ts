@@ -130,11 +130,13 @@ describeIf("native VAD integration", () => {
 
     for (let index = 0; index < 10; index += 1) {
       stream.pushFrame(
-        new AudioFrame(
-          new Int16Array(inputSamplesPerFrame),
-          inputSampleRate,
-          1,
-          inputSamplesPerFrame,
+        detector.processor.process(
+          new AudioFrame(
+            new Int16Array(inputSamplesPerFrame),
+            inputSampleRate,
+            1,
+            inputSamplesPerFrame,
+          ),
         ),
       );
     }
@@ -174,7 +176,9 @@ describeIf("native VAD integration", () => {
 
     for (let start = 0; start < audio.length; start += samplesPerFrame) {
       const block = audio.slice(start, start + samplesPerFrame);
-      stream.pushFrame(new AudioFrame(block, sampleRate, 1, block.length));
+      stream.pushFrame(
+        detector.processor.process(new AudioFrame(block, sampleRate, 1, block.length)),
+      );
     }
     stream.endInput();
     const events = [];

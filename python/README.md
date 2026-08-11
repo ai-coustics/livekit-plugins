@@ -40,11 +40,13 @@ After loading the SDK models as described below:
 ```python
 processor = ai_coustics.Processor(model=enhancement_model)
 vad = ai_coustics.VAD(model=vad_model)
+frame_processor = ai_coustics.FrameProcessorChain(vad.processor, processor)
 ```
 
-Unlike the official VAD, this package's VAD runs a dedicated SDK VAD model and does not depend on
-Processor metadata. Provision a separate VAD model if you use it. LiveKit Cloud authentication is
-not carried over; obtain an ai-coustics SDK license before migrating.
+This package still uses a dedicated SDK VAD model. Like the official plugin, inference runs in the
+RoomIO frame-processor path and the VAD streams consume frame metadata. Provision a separate VAD
+model and install `vad.processor` as described below. LiveKit Cloud authentication is not carried
+over; obtain an ai-coustics SDK license before migrating.
 
 ## Model provisioning
 
@@ -77,6 +79,7 @@ from livekit.plugins import ai_coustics
 
 processor = ai_coustics.Processor(model=enhancement_model)
 vad = ai_coustics.VAD(model=vad_model)
+frame_processor = ai_coustics.FrameProcessorChain(vad.processor, processor)
 
 session = AgentSession(
     vad=vad,
@@ -86,12 +89,17 @@ session = AgentSession(
 await session.start(
     # ... agent, room
     room_options=room_io.RoomOptions(
-        audio_input=room_io.AudioInputOptions(noise_cancellation=processor),
+        audio_input=room_io.AudioInputOptions(noise_cancellation=frame_processor),
     ),
 )
 ```
 
-Use either component independently by omitting the other from the configuration.
+`vad.processor` must be installed in the `noise_cancellation` path whenever the VAD is used. Put
+it first in the chain so it runs on original microphone audio before enhancement. All VAD streams
+read the resulting immutable metadata, so the SDK model runs only once per audio block.
+
+For VAD without enhancement, use `noise_cancellation=vad.processor`. For enhancement without VAD,
+use `noise_cancellation=processor`.
 
 ### Audio-quality analysis
 
@@ -126,10 +134,10 @@ Results are not logged by the plugin; log or handle them in the callback.
 
 ### Combining frame processors
 
-Use `FrameProcessorChain` to run enhancement and analysis in the same RoomIO audio path:
+Use `FrameProcessorChain` to run VAD inference before enhancement in the same RoomIO audio path:
 
 ```python
-frame_processor = ai_coustics.FrameProcessorChain(processor, analyzer.collector)
+frame_processor = ai_coustics.FrameProcessorChain(vad.processor, processor)
 
 await session.start(
     # ... agent, room
@@ -141,8 +149,9 @@ await session.start(
 )
 ```
 
-`FrameProcessorChain` runs its processors in order. In the example, the collector analyzes enhanced
-audio; reverse the arguments to analyze the original audio while still returning enhanced audio.
+`FrameProcessorChain` runs its processors in order. Keep `vad.processor` first: it annotates the
+original frame, then `processor` enhances the audio while preserving that metadata. Chains can be
+nested when the analyzer collector is also needed.
 
 This still uses LiveKit's `noise_cancellation` slot as a temporary integration. RoomIO owns the
 chain and closes the processor, collector, and analyzer together.
@@ -177,7 +186,3 @@ concurrent room; RoomIO closes it with the input stream.
 
 Models must be provisioned explicitly. This package does not support
 `python -m livekit.agents download-files`.
-
-When Processor and VAD are enabled together, RoomIO sends enhanced audio to the VAD. See the
-repository's [architecture notes](https://github.com/ai-coustics/livekit-plugins/blob/main/DEVELOPMENT.md#raw-audio-fan-out-for-combined-processor-and-vad-use)
-if your application requires both components to receive the original microphone signal.

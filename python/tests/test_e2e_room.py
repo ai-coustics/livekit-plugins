@@ -133,6 +133,7 @@ async def test_processor_and_vad_run_in_a_real_agent_room_after_license_grace_pe
     publisher_room = rtc.Room()
     processor = ObservedProcessor(model=model)
     detector = ai_coustics.VAD(model=vad_model)
+    frame_processor = ai_coustics.FrameProcessorChain(detector.processor, processor)
     vad_metrics: list[object] = []
     detector.on("metrics_collected", vad_metrics.append)
     session = AgentSession(
@@ -156,7 +157,7 @@ async def test_processor_and_vad_run_in_a_real_agent_room_after_license_grace_pe
                     sample_rate=INPUT_SAMPLE_RATE,
                     num_channels=1,
                     frame_size_ms=50,
-                    noise_cancellation=processor,
+                    noise_cancellation=frame_processor,
                     auto_gain_control=False,
                 ),
                 audio_output=False,

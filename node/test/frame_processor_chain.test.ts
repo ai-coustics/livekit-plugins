@@ -37,14 +37,6 @@ class RecordingProcessor extends FrameProcessor<AudioFrame> {
     this.calls.push([this.name, "streamCleared"]);
   }
 
-  override onCredentialsUpdated(credentials: { token: string; url: string }): void {
-    this.calls.push([this.name, ["credentials", credentials]]);
-  }
-
-  override onCredentialsCleared(): void {
-    this.calls.push([this.name, "credentialsCleared"]);
-  }
-
   process(frame: AudioFrame): AudioFrame {
     this.calls.push([this.name, frame]);
     return this.output ?? frame;
@@ -87,7 +79,7 @@ describe("FrameProcessorChain", () => {
     expect(calls).toEqual([]);
   });
 
-  it("forwards lifecycle to both children in order", () => {
+  it("forwards stream lifecycle to both children in order", () => {
     const calls: Call[] = [];
     const chain = new FrameProcessorChain(
       new RecordingProcessor("first", calls),
@@ -98,11 +90,10 @@ describe("FrameProcessorChain", () => {
       participantIdentity: "participant",
       publicationSid: "TR_test",
     };
-    const credentials = { token: "token", url: "wss://example.test" };
 
     chain.onStreamInfoUpdated(streamInfo);
     chain.onStreamInfoCleared();
-    chain.onCredentialsUpdated(credentials);
+    chain.onCredentialsUpdated({ token: "token", url: "wss://example.test" });
     chain.onCredentialsCleared();
 
     expect(calls).toEqual([
@@ -110,10 +101,6 @@ describe("FrameProcessorChain", () => {
       ["second", ["stream", streamInfo]],
       ["first", "streamCleared"],
       ["second", "streamCleared"],
-      ["first", ["credentials", credentials]],
-      ["second", ["credentials", credentials]],
-      ["first", "credentialsCleared"],
-      ["second", "credentialsCleared"],
     ]);
   });
 

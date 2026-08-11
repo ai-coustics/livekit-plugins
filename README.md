@@ -6,7 +6,8 @@ ai-coustics SDKs and let LiveKit agents use:
 
 - `Processor` for speech enhancement through LiveKit's audio `FrameProcessor` interface.
 - `FrameProcessorChain` for applying two frame processors in sequence.
-- `VAD` for voice activity detection through LiveKit Agents' streaming VAD interface.
+- `VAD` for shared voice-activity inference through `vad.processor` and LiveKit's streaming VAD
+  interface.
 - `Analyzer` for periodic audio-quality analysis.
 
 Applications choose and provision the SDK models themselves. This keeps model selection, storage,

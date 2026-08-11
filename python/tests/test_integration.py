@@ -112,11 +112,13 @@ async def test_real_vad_stream_emits_livekit_inference_events(
     silence = np.zeros(input_samples_per_frame, dtype=np.int16)
     for _ in range(10):
         stream.push_frame(
-            rtc.AudioFrame(
-                data=silence.tobytes(),
-                sample_rate=input_sample_rate,
-                num_channels=1,
-                samples_per_channel=input_samples_per_frame,
+            detector.processor._process(
+                rtc.AudioFrame(
+                    data=silence.tobytes(),
+                    sample_rate=input_sample_rate,
+                    num_channels=1,
+                    samples_per_channel=input_samples_per_frame,
+                )
             )
         )
     stream.end_input()
@@ -158,11 +160,13 @@ async def test_real_vad_stream_detects_and_buffers_recorded_speech(
     for start in range(0, audio.size, SAMPLES_PER_FRAME):
         block = audio[start : start + SAMPLES_PER_FRAME]
         stream.push_frame(
-            rtc.AudioFrame(
-                data=block.tobytes(),
-                sample_rate=SAMPLE_RATE,
-                num_channels=1,
-                samples_per_channel=block.size,
+            detector.processor._process(
+                rtc.AudioFrame(
+                    data=block.tobytes(),
+                    sample_rate=SAMPLE_RATE,
+                    num_channels=1,
+                    samples_per_channel=block.size,
+                )
             )
         )
     stream.end_input()

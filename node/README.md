@@ -38,15 +38,17 @@ const vad = aic.vad();
 After loading the SDK models as described below:
 
 ```ts
-import { Processor, VAD } from "@ai-coustics/livekit-plugin";
+import { FrameProcessorChain, Processor, VAD } from "@ai-coustics/livekit-plugin";
 
 const processor = new Processor({ model: enhancementModel });
 const vad = new VAD({ model: vadModel });
+const frameProcessor = new FrameProcessorChain(vad.processor, processor);
 ```
 
-Unlike the official VAD, this package's VAD runs a dedicated SDK VAD model and does not depend on
-Processor metadata. Provision a separate VAD model if you use it. LiveKit Cloud authentication is
-not carried over; obtain an ai-coustics SDK license before migrating.
+This package still uses a dedicated SDK VAD model. Like the official plugin, inference runs in the
+RoomIO frame-processor path and the VAD streams consume frame metadata. Provision a separate VAD
+model and install `vad.processor` as described below. LiveKit Cloud authentication is not carried
+over; obtain an ai-coustics SDK license before migrating.
 
 ## Model provisioning
 
@@ -75,10 +77,11 @@ Create a `Processor` and `VAD` for each agent session:
 
 ```ts
 import { voice } from "@livekit/agents";
-import { Processor, VAD } from "@ai-coustics/livekit-plugin";
+import { FrameProcessorChain, Processor, VAD } from "@ai-coustics/livekit-plugin";
 
 const processor = new Processor({ model: enhancementModel });
 const vad = new VAD({ model: vadModel });
+const frameProcessor = new FrameProcessorChain(vad.processor, processor);
 
 const session = new voice.AgentSession({
   vad,
@@ -87,11 +90,16 @@ const session = new voice.AgentSession({
 
 await session.start({
   // ... agent, room
-  inputOptions: { noiseCancellation: processor },
+  inputOptions: { noiseCancellation: frameProcessor },
 });
 ```
 
-Use either component independently by omitting the other from the configuration.
+`vad.processor` must be installed in the `noiseCancellation` path whenever the VAD is used. Put it
+first in the chain so it runs on original microphone audio before enhancement. All VAD streams
+read the resulting immutable metadata, so the SDK model runs only once per audio block.
+
+For VAD without enhancement, use `noiseCancellation: vad.processor`. For enhancement without VAD,
+use `noiseCancellation: processor`.
 
 ### Audio-quality analysis
 
@@ -122,12 +130,12 @@ Results are not logged by the plugin; log or handle them in the callback.
 
 ### Combining frame processors
 
-Use `FrameProcessorChain` to run enhancement and analysis in the same RoomIO audio path:
+Use `FrameProcessorChain` to run VAD inference before enhancement in the same RoomIO audio path:
 
 ```ts
 import { FrameProcessorChain } from "@ai-coustics/livekit-plugin";
 
-const frameProcessor = new FrameProcessorChain(processor, analyzer.collector);
+const frameProcessor = new FrameProcessorChain(vad.processor, processor);
 
 await session.start({
   // ... agent, room
@@ -135,8 +143,9 @@ await session.start({
 });
 ```
 
-`FrameProcessorChain` runs its processors in order. In the example, the collector analyzes enhanced
-audio; reverse the arguments to analyze the original audio while still returning enhanced audio.
+`FrameProcessorChain` runs its processors in order. Keep `vad.processor` first: it annotates the
+original frame, then `processor` enhances the audio while preserving that metadata. Chains can be
+nested when the analyzer collector is also needed.
 
 This still uses LiveKit's `noiseCancellation` slot as a temporary integration. RoomIO owns the
 chain and closes the processor, collector, and analyzer together.
@@ -169,7 +178,3 @@ concurrent room; RoomIO closes it with the input stream.
 
 Models must be provisioned explicitly. This package does not support
 `npx livekit-agents download-files`.
-
-When Processor and VAD are enabled together, RoomIO sends enhanced audio to the VAD. See the
-repository's [architecture notes](https://github.com/ai-coustics/livekit-plugins/blob/main/DEVELOPMENT.md#raw-audio-fan-out-for-combined-processor-and-vad-use)
-if your application requires both components to receive the original microphone signal.

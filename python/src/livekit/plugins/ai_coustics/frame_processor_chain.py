@@ -47,14 +47,6 @@ class FrameProcessorChain(rtc.FrameProcessor[Frame]):
         for processor in self._processors:
             processor._on_stream_info_cleared()
 
-    def _on_credentials_updated(self, *, token: str, url: str) -> None:
-        for processor in self._processors:
-            processor._on_credentials_updated(token=token, url=url)
-
-    def _on_credentials_cleared(self) -> None:
-        for processor in self._processors:
-            processor._on_credentials_cleared()
-
     def _process(self, frame: Frame) -> Frame:
         if not self._enabled or self._closed:
             return frame

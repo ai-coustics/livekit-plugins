@@ -21,7 +21,7 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { Model, Processor, VAD } from "../src/index.js";
+import { FrameProcessorChain, Model, Processor, VAD } from "../src/index.js";
 
 const describeIf = process.env.AIC_SDK_LICENSE ? describe : describe.skip;
 const livekitUrl = process.env.LIVEKIT_URL ?? "ws://127.0.0.1:7880";
@@ -181,6 +181,7 @@ describeIf("Processor and VAD in a real AgentSession room", () => {
       const vadModel = Model.fromFile(Model.download(vadModelId, modelDir));
       const processor = new ObservedProcessor({ model });
       const detector = new ObservedVAD({ model: vadModel });
+      const frameProcessor = new FrameProcessorChain(detector.processor, processor);
       const roomName = `ai-coustics-e2e-${randomUUID()}`;
       let agentRoom: Room | undefined;
       let publisherRoom: Room | undefined;
@@ -209,7 +210,7 @@ describeIf("Processor and VAD in a real AgentSession room", () => {
             audioSampleRate: inputSampleRate,
             audioNumChannels: 1,
             participantIdentity: "publisher",
-            noiseCancellation: processor,
+            noiseCancellation: frameProcessor,
             textEnabled: false,
             videoEnabled: false,
           },
