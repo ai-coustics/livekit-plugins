@@ -49,6 +49,7 @@ interface InferenceResult {
   probability: number;
   detected: boolean;
   sensitivity: number;
+  speechHoldDuration: number;
   minimumSpeechDuration: number;
   inferenceDurationMs: number;
   predictionDelaySamples: number;
@@ -275,6 +276,9 @@ export class VADProcessor extends FrameProcessor<AudioFrame> {
         probability: context.rawVadProbability(),
         detected: context.isSpeechDetected(),
         sensitivity: context.getParameter(AicVadParameter.Sensitivity),
+        speechHoldDuration: context.getParameter(
+          AicVadParameter.SpeechHoldDuration,
+        ),
         minimumSpeechDuration: context.getParameter(
           AicVadParameter.MinimumSpeechDuration,
         ),
@@ -729,7 +733,13 @@ class AicVADStream extends LiveKitVADStream {
             rawAccumulatedSilence: 0,
             rawAccumulatedSpeech: alignedRawSpeechDurationMs,
           });
-        } else if (!result.detected && speaking) {
+        // The SDK hold is a rolling-majority window, so short utterances can make
+        // detected drop before a full hold interval of raw silence has elapsed.
+        } else if (
+          !result.detected &&
+          speaking &&
+          alignedRawSilenceDurationMs >= result.speechHoldDuration * 1000
+        ) {
           speaking = false;
           silenceDurationMs = alignedRawSilenceDurationMs;
           const completedSpeechDurationMs = Math.max(

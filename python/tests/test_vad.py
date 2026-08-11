@@ -252,7 +252,7 @@ def test_wraps_native_vad_construction_errors(monkeypatch: pytest.MonkeyPatch) -
 
 @pytest.mark.asyncio
 async def test_emits_inference_and_speech_transition_events() -> None:
-    vad = create_vad()
+    vad = create_vad(vad_parameters=VADParameters(speech_hold_duration=0.01))
     stream = vad.stream()
     native = FakeVad.instances[0]
     native.predictions.extend(
@@ -302,9 +302,32 @@ async def test_emits_inference_and_speech_transition_events() -> None:
 
 
 @pytest.mark.asyncio
+async def test_enforces_default_silence_floor_after_short_speech() -> None:
+    vad = create_vad()
+    stream = vad.stream()
+    native = FakeVad.instances[0]
+    native.predictions.extend([(0.9, True), *[(0.1, False)] * 25])
+
+    push_processed(vad, stream, make_frame(np.arange(26 * 160, dtype=np.int16)))
+    events = await collect_events(stream)
+
+    inference_events = [
+        event for event in events if event.type == agents.vad.VADEventType.INFERENCE_DONE
+    ]
+    end_events = [event for event in events if event.type == agents.vad.VADEventType.END_OF_SPEECH]
+    assert len(end_events) == 1
+    assert all(event.speaking for event in inference_events[1:])
+    assert inference_events[-1].raw_accumulated_silence == pytest.approx(0.25)
+    assert end_events[0].silence_duration == pytest.approx(0.25)
+
+
+@pytest.mark.asyncio
 async def test_aligns_events_and_candidate_audio_with_sdk_prediction_delay() -> None:
     vad = create_vad(
-        vad_parameters=VADParameters(minimum_speech_duration=0.02),
+        vad_parameters=VADParameters(
+            speech_hold_duration=0.03,
+            minimum_speech_duration=0.02,
+        ),
         prefix_padding_duration=0.0,
     )
     stream = vad.stream()

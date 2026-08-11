@@ -44,7 +44,9 @@ RoomIO closes `vad.processor` directly or through `FrameProcessorChain`.
 
 The wrapper overrides the model-specific SDK duration defaults with LiveKit-compatible values:
 50 ms minimum speech and a 250 ms speech hold. The latter satisfies the minimum silence required
-by LiveKit's streaming turn detector. Explicit `VADParameters` values still take precedence.
+by LiveKit's streaming turn detector. Because the SDK hold uses a rolling-majority window, the
+wrapper also keeps an active LiveKit speech segment open until that much continuous raw silence
+has accumulated. Explicit `VADParameters` values still take precedence.
 
 Each `Analyzer` owns one SDK collector/analyzer pair. Its public `collector` is a transparent
 `FrameProcessor` installed in RoomIO's `noise_cancellation` slot: it lazily initializes from the
