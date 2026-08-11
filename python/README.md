@@ -134,10 +134,15 @@ Results are not logged by the plugin; log or handle them in the callback.
 
 ### Combining frame processors
 
-Use `FrameProcessorChain` to run VAD inference before enhancement in the same RoomIO audio path:
+Use `FrameProcessorChain` to run any number of processors in the same RoomIO audio path. For
+example, this runs VAD inference and analysis on the raw input before enhancement:
 
 ```python
-frame_processor = ai_coustics.FrameProcessorChain(vad.processor, processor)
+frame_processor = ai_coustics.FrameProcessorChain(
+    vad.processor,
+    analyzer.collector,
+    processor,
+)
 
 await session.start(
     # ... agent, room
@@ -150,8 +155,9 @@ await session.start(
 ```
 
 `FrameProcessorChain` runs its processors in order. Keep `vad.processor` first: it annotates the
-original frame, then `processor` enhances the audio while preserving that metadata. Chains can be
-nested when the analyzer collector is also needed.
+original frame while preserving its audio. We recommend placing `analyzer.collector` before
+`processor`; measuring raw input makes it easier to understand how input audio quality affects the
+rest of the pipeline.
 
 This still uses LiveKit's `noise_cancellation` slot as a temporary integration. RoomIO owns the
 chain and closes the processor, collector, and analyzer together.

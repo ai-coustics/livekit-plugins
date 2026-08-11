@@ -5,23 +5,17 @@ import {
   type VideoFrame,
 } from "@livekit/rtc-node";
 
-/** Runs two frame processors in sequence and closes both with the chain. */
+/** Runs frame processors in sequence and closes them with the chain. */
 export class FrameProcessorChain<
   Frame extends AudioFrame | VideoFrame,
 > extends FrameProcessor<Frame> {
-  private readonly processors: readonly [
-    FrameProcessor<Frame>,
-    FrameProcessor<Frame>,
-  ];
+  private readonly processors: readonly FrameProcessor<Frame>[];
   private chainEnabled = true;
   private closed = false;
 
-  constructor(
-    first: FrameProcessor<Frame>,
-    second: FrameProcessor<Frame>,
-  ) {
+  constructor(...processors: FrameProcessor<Frame>[]) {
     super();
-    this.processors = [first, second];
+    this.processors = processors;
   }
 
   isEnabled(): boolean {

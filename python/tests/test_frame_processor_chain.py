@@ -86,11 +86,29 @@ def test_processes_enabled_children_in_order() -> None:
     assert calls == []
 
 
-def test_forwards_stream_lifecycle_to_both_children_in_order() -> None:
+def test_processes_arbitrary_number_of_children() -> None:
+    calls: list[tuple[str, object]] = []
+    frames = [make_frame(value) for value in range(4)]
+    chain = FrameProcessorChain(
+        RecordingProcessor("first", calls, output=frames[1]),
+        RecordingProcessor("second", calls, output=frames[2]),
+        RecordingProcessor("third", calls, output=frames[3]),
+    )
+
+    assert chain._process(frames[0]) is frames[3]
+    assert calls == [
+        ("first", frames[0]),
+        ("second", frames[1]),
+        ("third", frames[2]),
+    ]
+
+
+def test_forwards_stream_lifecycle_to_all_children_in_order() -> None:
     calls: list[tuple[str, object]] = []
     chain = FrameProcessorChain(
         RecordingProcessor("first", calls),
         RecordingProcessor("second", calls),
+        RecordingProcessor("third", calls),
     )
 
     chain._on_stream_info_updated(
@@ -105,16 +123,19 @@ def test_forwards_stream_lifecycle_to_both_children_in_order() -> None:
     assert calls == [
         ("first", ("stream", "room", "participant", "TR_test")),
         ("second", ("stream", "room", "participant", "TR_test")),
+        ("third", ("stream", "room", "participant", "TR_test")),
         ("first", "stream_cleared"),
         ("second", "stream_cleared"),
+        ("third", "stream_cleared"),
     ]
 
 
-def test_close_is_idempotent_and_closes_both_after_an_error() -> None:
+def test_close_is_idempotent_and_closes_all_children_after_an_error() -> None:
     calls: list[tuple[str, object]] = []
     chain = FrameProcessorChain(
         RecordingProcessor("first", calls, close_error=RuntimeError("failed")),
         RecordingProcessor("second", calls),
+        RecordingProcessor("third", calls),
     )
 
     try:
@@ -125,5 +146,5 @@ def test_close_is_idempotent_and_closes_both_after_an_error() -> None:
         raise AssertionError("expected close to raise")
 
     chain._close()
-    assert calls == [("first", "close"), ("second", "close")]
+    assert calls == [("first", "close"), ("second", "close"), ("third", "close")]
     assert not chain.enabled
