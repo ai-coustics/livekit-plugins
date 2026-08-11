@@ -155,7 +155,10 @@ An Analyzer is a side-channel consumer rather than an audio transform. The curre
 a pass-through `FrameProcessor` in RoomIO's single `noise_cancellation` slot.
 `FrameProcessorChain` allows it to run sequentially with the enhancement `Processor`, but this
 still couples observation to the transform path and makes raw-versus-enhanced placement depend on
-processor order.
+processor order. Making `Analyzer` itself delegate the FrameProcessor interface would permit the
+minor `noise_cancellation=analyzer` shortcut, but would duplicate the collector's public role and
+would not solve composition with `Processor`; keep the explicit collector unless an upstream
+interface makes the ownership model clearer.
 
 The preferred upstream solution is a generic audio observer or tap interface in LiveKit Agents.
 RoomIO or AgentSession should fan frames out to registered observers without allowing observer
@@ -188,9 +191,42 @@ As a further upstream option, `AgentSession` could forward observer results thro
 analysis discoverable alongside other session observability without forcing it into LiveKit's
 deprecated `metrics_collected` event or its closed `AgentMetrics` union. LiveKit could also define
 stable analyzer metric names and Cloud dashboard treatment; until then the plugin-owned
-OpenTelemetry instruments are intentionally aggregate and backend-agnostic. If future analysis
-models use different context windows, aic-sdk should expose the model's analysis-window duration
-so the plugin does not have to hard-code the current five-second window.
+OpenTelemetry instruments are intentionally aggregate and backend-agnostic.
+
+Adding an `AudioAnalysisMetrics` model to LiveKit's metrics package would be useful as an upstream
+data contract, but is not sufficient by itself. RoomIO does not subscribe to events from a
+`FrameProcessor`, AgentActivity only forwards metrics from its known model interfaces, the
+session-level `metrics_collected` event is deprecated, and session reports discard those events.
+LiveKit's OpenTelemetry exporter also maps each supported metric type explicitly. A complete
+integration would therefore need the observer transport, Python and Node metric types and union
+exports, the dedicated session event or another non-deprecated delivery path, explicit
+OpenTelemetry instruments, and a decision about Cloud persistence and dashboard rendering.
+
+If LiveKit chooses such a type, its fields should match the public aic-sdk result rather than
+inventing translations that the plugin cannot populate:
+
+```python
+class AudioAnalysisMetrics(_BaseMetrics):
+    type: Literal["audio_analysis_metrics"] = "audio_analysis_metrics"
+    label: str
+    timestamp: float
+    inference_duration: float
+    risk_score: float
+    speaker_reverb: float
+    speaker_loudness: float
+    interfering_speech: float
+    media_speech: float
+    noise: float
+    packet_loss: float
+    window_duration: float | None = None
+    metadata: Metadata | None = None
+```
+
+The current SDK has `media_speech` and `noise`, but no `codec_degradation` result. A Tyto analysis
+window is continuous room audio and is not naturally associated with an AgentSession `speech_id`.
+The streaming SDK determines its window length from the model but does not expose that duration,
+so `window_duration` must remain optional until aic-sdk provides it. If future analysis models use
+different context windows, that API will also avoid hard-coding the current five-second window.
 
 Python runs `analyze_buffered()` through `asyncio.to_thread()` because the binding releases the
 GIL during inference. Node aic-sdk 0.22 exposes only synchronous `analyzeBuffered()` and
