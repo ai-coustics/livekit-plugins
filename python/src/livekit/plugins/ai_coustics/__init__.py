@@ -8,7 +8,7 @@ from .frame_processor_chain import FrameProcessorChain
 from .log import logger
 from .processor import Processor
 from .processor_context import ProcessorContext
-from .vad import VAD, VADParameters
+from .vad import VAD, VADParameters, VADProcessor
 
 try:
     __version__ = version("ai-coustics-livekit-plugin")
@@ -35,5 +35,6 @@ __all__ = [
     "ProcessorParameter",
     "VAD",
     "VADParameters",
+    "VADProcessor",
     "__version__",
 ]

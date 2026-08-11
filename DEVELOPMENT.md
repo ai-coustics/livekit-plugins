@@ -29,18 +29,18 @@ rate-limited; recovery and close events summarize the affected frames, processin
 factor, and maximum accumulated processing backlog. The Node implementation falls back to the
 console for operational messages when LiveKit has not initialized its logger.
 
-Each `VAD` creates one native SDK VAD per LiveKit `VADStream`: `aic_sdk.VadAsync` in Python and
-`@ai-coustics/aic-sdk`'s synchronous `Vad` in Node. Streams downmix input and reblock it at its
-original sample rate; the SDK performs any model-rate conversion internally. They emit LiveKit
-inference and speech transition events from SDK predictions, reset all native and buffered state
-on `flush()`, and terminate their SDK session when closed. Event durations and speech lookback
-account for the SDK's prediction delay so decisions remain aligned with the input audio timeline.
-A rolling frame buffer retains only the required lookback, while a bounded contiguous PCM buffer
-makes each speech transition event expose its candidate audio as a single immutable `AudioFrame`.
+Each `VAD` owns one synchronous native SDK VAD and exposes it through a pass-through
+`vad.processor`. That processor must be installed at the start of RoomIO's `noise_cancellation`
+path. It downmixes and reblocks original input audio, runs inference once, and attaches immutable
+per-block results to the frame's userdata. Every LiveKit `VADStream` consumes the same results, so
+creating additional streams does not create native VADs or repeat inference. A missing-metadata
+diagnostic identifies configurations that forgot to install `vad.processor`.
 
-Python's async SDK API lets native VAD work yield naturally. The Node SDK VAD API is synchronous,
-so each native inference runs on the JavaScript thread used by the LiveKit VAD stream. Structured
-backlog warnings identify sustained slower-than-realtime processing.
+Streams independently derive LiveKit inference and speech transition events from the shared
+snapshots. Event durations and speech lookback account for the SDK's prediction delay, while raw
+mono PCM stored in each snapshot keeps candidate audio aligned even when a later processor in the
+chain replaces the frame's audio. Closing a stream does not terminate the shared SDK session;
+RoomIO closes `vad.processor` directly or through `FrameProcessorChain`.
 
 The wrapper overrides the model-specific SDK duration defaults with LiveKit-compatible values:
 50 ms minimum speech and a 250 ms speech hold. The latter satisfies the minimum silence required
@@ -52,8 +52,8 @@ first frame, downmixes PCM16 input to mono float32, buffers it, and returns the 
 unchanged. Stream boundaries reset the analyzer. Closing either the analyzer or its collector
 stops scheduling and terminates the SDK telemetry session.
 
-`FrameProcessorChain` forwards FrameProcessor lifecycle hooks and applies two enabled processors
-in constructor order. It lets a `Processor` and `Collector` share RoomIO's single
+`FrameProcessorChain` forwards stream-info lifecycle hooks and applies two enabled processors in
+constructor order. It lets a `Processor` and `Collector` share RoomIO's single
 `noise_cancellation` slot. Putting the collector first analyzes original audio; putting it second
 analyzes enhanced audio.
 
@@ -112,36 +112,6 @@ such as package metadata or an explicit package list. Until those pieces exist, 
 `Model.download` during provisioning and construct runtime models from the returned files with
 `Model.from_file` / `Model.fromFile`.
 
-### Raw-audio fan-out for combined Processor and VAD use
-
-The ai-coustics SDK recommends feeding the Processor and VAD the same original microphone blocks
-in parallel. Enhancement changes the signal and adds an independent audio delay, so passing the
-Processor output into the VAD stacks that delay in front of the VAD's prediction delay.
-
-LiveKit Agents currently provides one shared audio input to STT and VAD. When `Processor` is
-configured as RoomIO's `noise_cancellation`, RoomIO applies it before the audio reaches the
-`AgentSession`; consequently, the session's VAD receives enhanced, delayed audio:
-
-```text
-microphone -> Processor -> AgentSession -> STT and VAD
-```
-
-The intended topology is:
-
-```text
-                  +-> VAD -> speech decisions
-microphone -------+
-                  +-> Processor -> enhanced audio -> STT
-```
-
-The plugin cannot construct this topology itself because its `VADStream` only sees frames after
-RoomIO processing, while the `FrameProcessor` has no way to supply a separate raw stream to the
-session VAD. A complete solution therefore needs upstream LiveKit Agents support for a raw-audio
-tap, a separate VAD audio input, or a branching audio-processing graph. Until that exists,
-Processor-only and VAD-only configurations have the intended SDK topology; using both through the
-standard RoomIO path is functional, but the VAD operates on Processor output and its event timing
-cannot compensate for the Processor's independent audio delay.
-
 ### First-class streaming Analyzer integration
 
 The aic-sdk streaming analysis API is split into a `Collector` and an `Analyzer`. The collector
@@ -167,13 +137,12 @@ metadata, audio-format initialization, hard-boundary reset or flush, track repla
 and asynchronous close. Placement should be explicit:
 
 - A `raw` tap before noise cancellation and automatic gain control measures the caller's original
-  environment and can share the unmodified signal with the VAD.
+  environment.
 - A `processed` tap observes exactly what downstream STT, VAD, turn detection, or speech-to-speech
   models receive and is the appropriate default for predicting downstream failure.
 
 Supporting a truly raw tap may also require an RTC `AudioStream` hook or a branching processing
-graph because the current RTC frame processor runs before Agents receives the frame. This work can
-therefore share the upstream solution proposed for Processor/VAD raw-audio fan-out.
+graph because the current RTC frame processor runs before Agents receives the frame.
 
 Once that upstream interface exists, the plugin should create one SDK collector/analyzer pair per
 LiveKit observer stream. The current plugin-level `analysis_result` / `analysisResult` events can

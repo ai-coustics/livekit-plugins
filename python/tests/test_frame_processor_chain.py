@@ -53,12 +53,6 @@ class RecordingProcessor(rtc.FrameProcessor[rtc.AudioFrame]):
     def _on_stream_info_cleared(self) -> None:
         self.calls.append((self.name, "stream_cleared"))
 
-    def _on_credentials_updated(self, *, token: str, url: str) -> None:
-        self.calls.append((self.name, ("credentials", token, url)))
-
-    def _on_credentials_cleared(self) -> None:
-        self.calls.append((self.name, "credentials_cleared"))
-
     def _process(self, frame: rtc.AudioFrame) -> rtc.AudioFrame:
         self.calls.append((self.name, frame))
         return self.output or frame
@@ -92,7 +86,7 @@ def test_processes_enabled_children_in_order() -> None:
     assert calls == []
 
 
-def test_forwards_lifecycle_to_both_children_in_order() -> None:
+def test_forwards_stream_lifecycle_to_both_children_in_order() -> None:
     calls: list[tuple[str, object]] = []
     chain = FrameProcessorChain(
         RecordingProcessor("first", calls),
@@ -113,10 +107,6 @@ def test_forwards_lifecycle_to_both_children_in_order() -> None:
         ("second", ("stream", "room", "participant", "TR_test")),
         ("first", "stream_cleared"),
         ("second", "stream_cleared"),
-        ("first", ("credentials", "token", "wss://example.test")),
-        ("second", ("credentials", "token", "wss://example.test")),
-        ("first", "credentials_cleared"),
-        ("second", "credentials_cleared"),
     ]
 
 

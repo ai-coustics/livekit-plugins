@@ -18,4 +18,4 @@ export {
   type ProcessorOptions,
 } from "./processor.js";
 export { ProcessorContext } from "./processor_context.js";
-export { VAD, type VADOptions, type VADParameters } from "./vad.js";
+export { VAD, type VADOptions, type VADParameters, VADProcessor } from "./vad.js";

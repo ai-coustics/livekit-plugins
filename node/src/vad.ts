@@ -3,7 +3,11 @@ import {
   VADStream as LiveKitVADStream,
   VADEventType,
 } from "@livekit/agents";
-import { AudioFrame } from "@livekit/rtc-node";
+import {
+  AudioFrame,
+  FrameProcessor,
+  type FrameProcessorStreamInfo,
+} from "@livekit/rtc-node";
 
 import { writeLog } from "./log.js";
 import { pcm16ToFloat32 } from "./processor.js";
@@ -16,31 +20,48 @@ import {
   setSdkId,
 } from "./sdk.js";
 
+const FRAME_USERDATA_VAD_ATTRIBUTE = "ai_coustics.vad";
 const DEFAULT_SPEECH_HOLD_DURATION_SECONDS = 0.25;
 const DEFAULT_MINIMUM_SPEECH_DURATION_SECONDS = 0.05;
 const DEFAULT_PREFIX_PADDING_DURATION_MS = 500;
 const DEFAULT_MAX_BUFFERED_SPEECH_MS = 60_000;
 const SLOW_INFERENCE_BACKLOG_THRESHOLD_MS = 200;
 const SLOW_WARNING_INTERVAL_MS = 10_000;
+const MISSING_METADATA_WARNING_FRAMES = 10;
 
 export interface VADParameters {
-  /** SDK speech probability threshold. */
   sensitivity?: number;
-  /** SDK speech hold duration in seconds. */
   speechHoldDuration?: number;
-  /** SDK minimum speech duration in seconds. */
   minimumSpeechDuration?: number;
 }
 
 export interface VADOptions {
-  /** Loaded dedicated ai-coustics VAD model. */
   model: Model;
   licenseKey?: string;
   vadParameters?: VADParameters;
-  /** LiveKit speech prefix padding in milliseconds. */
   prefixPaddingDuration?: number;
-  /** Maximum buffered speech duration in milliseconds. */
   maxBufferedSpeech?: number;
+}
+
+interface InferenceResult {
+  pcm: Int16Array;
+  sampleRate: number;
+  probability: number;
+  detected: boolean;
+  sensitivity: number;
+  minimumSpeechDuration: number;
+  inferenceDurationMs: number;
+  predictionDelaySamples: number;
+}
+
+interface InferenceError {
+  message: string;
+  cause: unknown;
+}
+
+interface FrameMetadata {
+  results: readonly InferenceResult[];
+  error?: InferenceError;
 }
 
 function resolveLicenseKey(value?: string): string {
@@ -57,12 +78,257 @@ function errorDetail(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** LiveKit Agents VAD backed by a dedicated ai-coustics SDK VAD model. */
+/** Pass-through processor that runs one SDK VAD and annotates input frames. */
+export class VADProcessor extends FrameProcessor<AudioFrame> {
+  private readonly model: Model;
+  private readonly modelId: string;
+  private nativeVad: VadInstance | null;
+  private context: VadContext | null;
+  private processorEnabled = true;
+  private closed = false;
+  private format: [number, number] | null = null;
+  private inferenceBuffer = new Int16Array(0);
+  private predictionDelaySamples = 0;
+  private processingBacklogMs = 0;
+  private slowWarningActive = false;
+  private lastSlowWarning = 0;
+  private streamInfo: FrameProcessorStreamInfo | null = null;
+
+  constructor(model: Model, licenseKey: string) {
+    super();
+    setSdkId(9);
+    let nativeVad: VadInstance;
+    try {
+      nativeVad = new AicVad(model, licenseKey);
+    } catch (error) {
+      throw new Error(`Failed to create ai-coustics VAD: ${errorDetail(error)}`, {
+        cause: error,
+      });
+    }
+    this.model = model;
+    this.modelId = model.getId();
+    this.nativeVad = nativeVad;
+    this.context = nativeVad.getContext();
+  }
+
+  get sdkContext(): VadContext {
+    if (!this.context) {
+      throw new Error("Cannot get context from a closed ai-coustics VAD processor");
+    }
+    return this.context;
+  }
+
+  isEnabled(): boolean {
+    return this.processorEnabled;
+  }
+
+  setEnabled(enabled: boolean): void {
+    if (this.closed || enabled === this.processorEnabled) return;
+    if (enabled) this.reset();
+    this.processorEnabled = enabled;
+  }
+
+  override onStreamInfoUpdated(info: FrameProcessorStreamInfo): void {
+    if (
+      this.streamInfo &&
+      (this.streamInfo.roomName !== info.roomName ||
+        this.streamInfo.participantIdentity !== info.participantIdentity ||
+        this.streamInfo.publicationSid !== info.publicationSid)
+    ) {
+      this.reset();
+    }
+    this.streamInfo = info;
+  }
+
+  override onStreamInfoCleared(): void {
+    if (this.streamInfo) this.reset();
+    this.streamInfo = null;
+  }
+
+  process(frame: AudioFrame): AudioFrame {
+    if (!this.processorEnabled || !this.nativeVad || !this.context) return frame;
+
+    let metadata: FrameMetadata;
+    try {
+      metadata = { results: this.processFrame(frame) };
+    } catch (error) {
+      metadata = {
+        results: [],
+        error: { message: errorDetail(error), cause: error },
+      };
+    }
+    frame.userdata[FRAME_USERDATA_VAD_ATTRIBUTE] = metadata;
+    return frame;
+  }
+
+  reset(): void {
+    this.context?.reset();
+    this.format = null;
+    this.inferenceBuffer = new Int16Array(0);
+    this.predictionDelaySamples = 0;
+    this.processingBacklogMs = 0;
+    this.slowWarningActive = false;
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.processorEnabled = false;
+    const nativeVad = this.nativeVad;
+    this.nativeVad = null;
+    this.context = null;
+    this.inferenceBuffer = new Int16Array(0);
+    if (nativeVad) {
+      try {
+        nativeVad.terminateSession();
+      } catch (error) {
+        writeLog(
+          "error",
+          "vad",
+          "session termination failed",
+          this.diagnosticFields({
+            errorType: error instanceof Error ? error.name : typeof error,
+            errorMessage: errorDetail(error),
+          }),
+          error,
+        );
+      }
+    }
+  }
+
+  private processFrame(frame: AudioFrame): readonly InferenceResult[] {
+    const nativeVad = this.nativeVad;
+    const context = this.context;
+    if (!nativeVad || !context) return [];
+
+    const expectedSamples = frame.samplesPerChannel * frame.channels;
+    if (frame.data.length !== expectedSamples) {
+      throw new Error(
+        `AudioFrame contains ${frame.data.length} samples, expected ${expectedSamples}`,
+      );
+    }
+    const mono = new Int16Array(frame.samplesPerChannel);
+    if (frame.channels === 1) {
+      mono.set(frame.data);
+    } else {
+      for (let sample = 0; sample < frame.samplesPerChannel; sample += 1) {
+        let sum = 0;
+        for (let channel = 0; channel < frame.channels; channel += 1) {
+          sum += frame.data[sample * frame.channels + channel]!;
+        }
+        mono[sample] = Math.round(sum / frame.channels);
+      }
+    }
+
+    const inferenceBlockSize = this.model.getOptimalBlockSize(frame.sampleRate);
+    const nextFormat: [number, number] = [frame.sampleRate, inferenceBlockSize];
+    if (
+      !this.format ||
+      this.format[0] !== nextFormat[0] ||
+      this.format[1] !== nextFormat[1]
+    ) {
+      try {
+        nativeVad.initialize(frame.sampleRate, inferenceBlockSize, false);
+      } catch (error) {
+        throw new Error(
+          `ai-coustics VAD initialization failed (model=${this.modelId}, ` +
+            `sampleRate=${frame.sampleRate}, blockSize=${inferenceBlockSize}): ` +
+            errorDetail(error),
+          { cause: error },
+        );
+      }
+      this.format = nextFormat;
+      this.inferenceBuffer = new Int16Array(0);
+      this.predictionDelaySamples = context.getPredictionDelay();
+    }
+
+    const buffered = new Int16Array(this.inferenceBuffer.length + mono.length);
+    buffered.set(this.inferenceBuffer);
+    buffered.set(mono, this.inferenceBuffer.length);
+    this.inferenceBuffer = buffered;
+
+    const results: InferenceResult[] = [];
+    while (this.inferenceBuffer.length >= inferenceBlockSize) {
+      const pcm = this.inferenceBuffer.slice(0, inferenceBlockSize);
+      this.inferenceBuffer = this.inferenceBuffer.slice(inferenceBlockSize);
+      const started = performance.now();
+      try {
+        nativeVad.process(pcm16ToFloat32(pcm));
+      } catch (error) {
+        throw new Error(
+          `ai-coustics VAD inference failed (model=${this.modelId}, ` +
+            `sampleRate=${frame.sampleRate}, blockSize=${inferenceBlockSize}): ` +
+            errorDetail(error),
+          { cause: error },
+        );
+      }
+      const completed = performance.now();
+      const inferenceDurationMs = completed - started;
+      const blockDurationMs = (inferenceBlockSize / frame.sampleRate) * 1000;
+      this.processingBacklogMs = Math.max(
+        0,
+        this.processingBacklogMs + inferenceDurationMs - blockDurationMs,
+      );
+      results.push({
+        pcm,
+        sampleRate: frame.sampleRate,
+        probability: context.rawVadProbability(),
+        detected: context.isSpeechDetected(),
+        sensitivity: context.getParameter(AicVadParameter.Sensitivity),
+        minimumSpeechDuration: context.getParameter(
+          AicVadParameter.MinimumSpeechDuration,
+        ),
+        inferenceDurationMs,
+        predictionDelaySamples: this.predictionDelaySamples,
+      });
+
+      if (this.processingBacklogMs === 0) {
+        this.slowWarningActive = false;
+      } else if (
+        this.processingBacklogMs >= SLOW_INFERENCE_BACKLOG_THRESHOLD_MS &&
+        (!this.slowWarningActive ||
+          completed - this.lastSlowWarning >= SLOW_WARNING_INTERVAL_MS)
+      ) {
+        this.slowWarningActive = true;
+        this.lastSlowWarning = completed;
+        writeLog(
+          "warn",
+          "vad",
+          "inference falling behind realtime",
+          this.diagnosticFields({
+            inferenceDurationMs,
+            blockDurationMs,
+            realtimeFactor: inferenceDurationMs / blockDurationMs,
+            processingBacklogMs: this.processingBacklogMs,
+            sampleRate: frame.sampleRate,
+            blockSize: inferenceBlockSize,
+          }),
+        );
+      }
+    }
+    return results;
+  }
+
+  diagnosticFields(fields: Record<string, unknown> = {}): Record<string, unknown> {
+    const diagnostics: Record<string, unknown> = {
+      modelProvider: "ai-coustics",
+      modelName: this.modelId,
+    };
+    if (this.streamInfo) Object.assign(diagnostics, this.streamInfo);
+    if (this.format) {
+      Object.assign(diagnostics, {
+        sampleRate: this.format[0],
+        blockSize: this.format[1],
+      });
+    }
+    return Object.assign(diagnostics, fields);
+  }
+}
+
+/** LiveKit VAD whose shared `processor` performs the SDK inference. */
 export class VAD extends LiveKitVAD {
   label = "ai-coustics.VAD";
 
-  private readonly sdkModel: Model;
-  private readonly licenseKey: string;
   private readonly modelId: string;
   private readonly prefixPaddingDuration: number;
   private readonly maxBufferedSpeech: number;
@@ -71,8 +337,7 @@ export class VAD extends LiveKitVAD {
     minimumSpeechDuration: DEFAULT_MINIMUM_SPEECH_DURATION_SECONDS,
   };
   private readonly streams = new Set<WeakRef<AicVADStream>>();
-  private initialVad: VadInstance | null;
-  private initialContext: VadContext | null;
+  private readonly sharedProcessor: VADProcessor;
 
   constructor(options: VADOptions) {
     const prefixPaddingDuration =
@@ -90,18 +355,19 @@ export class VAD extends LiveKitVAD {
     const modelBlockSize = options.model.getOptimalBlockSize(modelSampleRate);
     super({ updateInterval: (modelBlockSize / modelSampleRate) * 1000 });
 
-    this.sdkModel = options.model;
-    this.licenseKey = resolveLicenseKey(options.licenseKey);
     this.modelId = options.model.getId();
     this.prefixPaddingDuration = prefixPaddingDuration;
     this.maxBufferedSpeech = maxBufferedSpeech;
+    this.sharedProcessor = new VADProcessor(
+      options.model,
+      resolveLicenseKey(options.licenseKey),
+    );
+    this.setParameters(this.parameters);
+    if (options.vadParameters) this.setParameters(options.vadParameters);
+  }
 
-    const initial = this.createNativeVad();
-    this.initialVad = initial.vad;
-    this.initialContext = initial.context;
-    if (options.vadParameters) {
-      this.setParameters(options.vadParameters);
-    }
+  get processor(): VADProcessor {
+    return this.sharedProcessor;
   }
 
   get model(): string {
@@ -119,21 +385,8 @@ export class VAD extends LiveKitVAD {
   }
 
   override stream(): LiveKitVADStream {
-    let nativeVad: VadInstance;
-    let context: VadContext;
-    if (this.initialVad && this.initialContext) {
-      nativeVad = this.initialVad;
-      context = this.initialContext;
-      this.initialVad = null;
-      this.initialContext = null;
-    } else {
-      ({ vad: nativeVad, context } = this.createNativeVad());
-    }
-
     const stream = new AicVADStream(this, {
-      nativeVad,
-      context,
-      model: this.sdkModel,
+      processor: this.sharedProcessor,
       prefixPaddingDuration: this.prefixPaddingDuration,
       maxBufferedSpeech: this.maxBufferedSpeech,
     });
@@ -142,182 +395,85 @@ export class VAD extends LiveKitVAD {
   }
 
   setParameters(parameters: VADParameters): void {
-    const contexts: VadContext[] = [];
-    if (this.initialContext) contexts.push(this.initialContext);
-    for (const reference of this.streams) {
-      const stream = reference.deref();
-      if (!stream) {
-        this.streams.delete(reference);
-        continue;
-      }
-      const context = stream.sdkContext;
-      if (context) contexts.push(context);
+    if (
+      parameters.sensitivity !== undefined &&
+      this.applyParameter(
+        AicVadParameter.Sensitivity,
+        "sensitivity",
+        parameters.sensitivity,
+      )
+    ) {
+      this.parameters.sensitivity = parameters.sensitivity;
     }
-    if (contexts.length === 0) {
-      const initial = this.createNativeVad();
-      this.initialVad = initial.vad;
-      this.initialContext = initial.context;
-      contexts.push(initial.context);
+    if (
+      parameters.speechHoldDuration !== undefined &&
+      this.applyParameter(
+        AicVadParameter.SpeechHoldDuration,
+        "speechHoldDuration",
+        parameters.speechHoldDuration,
+      )
+    ) {
+      this.parameters.speechHoldDuration = parameters.speechHoldDuration;
     }
-
-    if (parameters.sensitivity !== undefined) {
-      if (
-        this.applyParameter(
-          contexts,
-          AicVadParameter.Sensitivity,
-          "sensitivity",
-          parameters.sensitivity,
-        )
-      ) {
-        this.parameters.sensitivity = parameters.sensitivity;
-      }
-    }
-    if (parameters.speechHoldDuration !== undefined) {
-      if (
-        this.applyParameter(
-          contexts,
-          AicVadParameter.SpeechHoldDuration,
-          "speechHoldDuration",
-          parameters.speechHoldDuration,
-        )
-      ) {
-        this.parameters.speechHoldDuration = parameters.speechHoldDuration;
-      }
-    }
-    if (parameters.minimumSpeechDuration !== undefined) {
-      if (
-        this.applyParameter(
-          contexts,
-          AicVadParameter.MinimumSpeechDuration,
-          "minimumSpeechDuration",
-          parameters.minimumSpeechDuration,
-        )
-      ) {
-        this.parameters.minimumSpeechDuration = parameters.minimumSpeechDuration;
-      }
+    if (
+      parameters.minimumSpeechDuration !== undefined &&
+      this.applyParameter(
+        AicVadParameter.MinimumSpeechDuration,
+        "minimumSpeechDuration",
+        parameters.minimumSpeechDuration,
+      )
+    ) {
+      this.parameters.minimumSpeechDuration = parameters.minimumSpeechDuration;
     }
   }
 
-  private applyParameter(
-    contexts: VadContext[],
-    parameter: AicVadParameter,
-    name: string,
-    value: number,
-  ): boolean {
+  override async close(): Promise<void> {
+    for (const reference of this.streams) reference.deref()?.close();
+    this.streams.clear();
+    this.sharedProcessor.close();
+  }
+
+  private applyParameter(parameter: number, name: string, value: number): boolean {
     try {
-      for (const context of contexts) context.setParameter(parameter, value);
+      this.sharedProcessor.sdkContext.setParameter(parameter, value);
     } catch (error) {
-      const fields = {
-        modelProvider: "ai-coustics",
-        modelName: this.modelId,
-        parameter: name,
-        parameterValue: value,
-        errorType: error instanceof Error ? error.name : typeof error,
-        errorMessage: errorDetail(error),
-      };
       writeLog(
         "warn",
         "vad",
         "parameter rejected; keeping the current value",
-        fields,
+        this.sharedProcessor.diagnosticFields({
+          parameter: name,
+          parameterValue: value,
+          errorType: error instanceof Error ? error.name : typeof error,
+          errorMessage: errorDetail(error),
+        }),
         error,
       );
       return false;
     }
     return true;
   }
-
-  override async close(): Promise<void> {
-    if (this.initialVad) {
-      try {
-        this.initialVad.terminateSession();
-      } catch (error) {
-        writeLog(
-          "error",
-          "vad",
-          "session termination failed",
-          { modelName: this.modelId, errorMessage: errorDetail(error) },
-          error,
-        );
-      }
-      this.initialVad = null;
-      this.initialContext = null;
-    }
-
-    for (const reference of this.streams) {
-      reference.deref()?.close();
-    }
-    this.streams.clear();
-  }
-
-  private createNativeVad(): { vad: VadInstance; context: VadContext } {
-    // The SDK keeps the first integration identifier it receives. Set this before construction
-    // so usage is attributed to the LiveKit Node plugin.
-    setSdkId(9);
-    let vad: VadInstance;
-    try {
-      vad = new AicVad(this.sdkModel, this.licenseKey);
-    } catch (error) {
-      throw new Error(`Failed to create ai-coustics VAD: ${errorDetail(error)}`, {
-        cause: error,
-      });
-    }
-
-    const context = vad.getContext();
-    if (this.parameters.sensitivity !== undefined) {
-      this.applyParameter(
-        [context],
-        AicVadParameter.Sensitivity,
-        "sensitivity",
-        this.parameters.sensitivity,
-      );
-    }
-    if (this.parameters.speechHoldDuration !== undefined) {
-      this.applyParameter(
-        [context],
-        AicVadParameter.SpeechHoldDuration,
-        "speechHoldDuration",
-        this.parameters.speechHoldDuration,
-      );
-    }
-    if (this.parameters.minimumSpeechDuration !== undefined) {
-      this.applyParameter(
-        [context],
-        AicVadParameter.MinimumSpeechDuration,
-        "minimumSpeechDuration",
-        this.parameters.minimumSpeechDuration,
-      );
-    }
-    return { vad, context };
-  }
 }
 
 interface StreamOptions {
-  nativeVad: VadInstance;
-  context: VadContext;
-  model: Model;
+  processor: VADProcessor;
   prefixPaddingDuration: number;
   maxBufferedSpeech: number;
 }
 
 class AicVADStream extends LiveKitVADStream {
-  private nativeVad: VadInstance | null;
-  private context: VadContext | null;
-  private readonly model: Model;
+  private readonly processor: VADProcessor;
   private readonly prefixPaddingDuration: number;
   private readonly maxBufferedSpeech: number;
-  private lastSlowWarning = 0;
   private outputFinished = false;
   private pumpError: unknown;
+  private missingMetadataFrames = 0;
 
   constructor(vad: VAD, options: StreamOptions) {
     super(vad);
-    this.nativeVad = options.nativeVad;
-    this.context = options.context;
-    this.model = options.model;
+    this.processor = options.processor;
     this.prefixPaddingDuration = options.prefixPaddingDuration;
     this.maxBufferedSpeech = options.maxBufferedSpeech;
-
     void this.pump()
       .then(() => this.finishOutput())
       .catch(async (error: unknown) => {
@@ -326,16 +482,14 @@ class AicVADStream extends LiveKitVADStream {
           "error",
           "vad",
           "stream failed",
-          { modelName: this.model.getId(), errorMessage: errorDetail(error) },
+          this.processor.diagnosticFields({
+            errorType: error instanceof Error ? error.name : typeof error,
+            errorMessage: errorDetail(error),
+          }),
           error,
         );
         await this.finishOutput();
-      })
-      .finally(() => this.terminateNative());
-  }
-
-  get sdkContext(): VadContext | null {
-    return this.context;
+      });
   }
 
   override endInput(): void {
@@ -350,7 +504,6 @@ class AicVADStream extends LiveKitVADStream {
     this.closed = true;
     void this.detachInputStream();
     void this.inputReader.cancel();
-    this.terminateNative();
     void this.finishOutput();
   }
 
@@ -370,47 +523,17 @@ class AicVADStream extends LiveKitVADStream {
     try {
       await this.outputWriter.close();
     } catch {
-      // The output can already be closed or cancelled during AgentSession teardown.
-    }
-  }
-
-  private terminateNative(): void {
-    const nativeVad = this.nativeVad;
-    this.nativeVad = null;
-    this.context = null;
-    if (!nativeVad) return;
-    try {
-      nativeVad.terminateSession();
-    } catch (error) {
-      writeLog(
-        "error",
-        "vad",
-        "session termination failed",
-        { modelName: this.model.getId(), errorMessage: errorDetail(error) },
-        error,
-      );
+      // The output can already be closed during AgentSession teardown.
     }
   }
 
   private async pump(): Promise<void> {
-    const nativeVad = this.nativeVad;
-    const context = this.context;
-    if (!nativeVad || !context) return;
-
     let inputSampleRate = 0;
-    let inferenceBlockSize = 0;
-    let predictionDelaySamples = 0;
-    let configuredFormat: [number, number] | null = null;
-    let inferenceBuffer = new Int16Array(0);
-
     const prefixFrames: AudioFrame[] = [];
     let prefixSamples = 0;
     let speechBuffer: Int16Array | null = null;
     let speechSamples = 0;
     let speechBufferFull = false;
-    let processingBacklogMs = 0;
-    let slowWarningActive = false;
-
     let speaking = false;
     let speechDurationMs = 0;
     let silenceDurationMs = 0;
@@ -420,17 +543,12 @@ class AicVADStream extends LiveKitVADStream {
     let timestampMs = 0;
 
     const resetState = () => {
-      context.reset();
       inputSampleRate = 0;
-      inferenceBlockSize = 0;
-      inferenceBuffer = new Int16Array(0);
       prefixFrames.length = 0;
       prefixSamples = 0;
       speechBuffer = null;
       speechSamples = 0;
       speechBufferFull = false;
-      processingBacklogMs = 0;
-      slowWarningActive = false;
       speaking = false;
       speechDurationMs = 0;
       silenceDurationMs = 0;
@@ -440,50 +558,16 @@ class AicVADStream extends LiveKitVADStream {
       timestampMs = 0;
     };
 
-    const toMono = (frame: AudioFrame): Int16Array => {
-      const expectedSamples = frame.samplesPerChannel * frame.channels;
-      if (frame.data.length !== expectedSamples) {
-        throw new Error(
-          `AudioFrame contains ${frame.data.length} samples, expected ${expectedSamples}`,
-        );
-      }
-      if (frame.channels === 1) return frame.data;
-
-      const mono = new Int16Array(frame.samplesPerChannel);
-      for (let sample = 0; sample < frame.samplesPerChannel; sample += 1) {
-        let sum = 0;
-        for (let channel = 0; channel < frame.channels; channel += 1) {
-          sum += frame.data[sample * frame.channels + channel]!;
-        }
-        mono[sample] = Math.round(sum / frame.channels);
-      }
-      return mono;
-    };
-
-    const appendInferenceAudio = (audio: Int16Array) => {
-      if (inferenceBuffer.length === 0) {
-        inferenceBuffer = audio.slice();
-        return;
-      }
-      const combined = new Int16Array(inferenceBuffer.length + audio.length);
-      combined.set(inferenceBuffer);
-      combined.set(audio, inferenceBuffer.length);
-      inferenceBuffer = combined;
-    };
-
-    const updatePrefixBuffer = (frame: AudioFrame) => {
+    const updatePrefixBuffer = (frame: AudioFrame, result: InferenceResult) => {
       prefixFrames.push(frame);
       prefixSamples += frame.samplesPerChannel;
-      const minimumSpeechDuration = context.getParameter(
-        AicVadParameter.MinimumSpeechDuration,
-      );
       const activationSamples = Math.max(
         frame.samplesPerChannel,
-        Math.trunc(minimumSpeechDuration * frame.sampleRate),
+        Math.trunc(result.minimumSpeechDuration * frame.sampleRate),
       );
       const targetSamples =
         Math.trunc((this.prefixPaddingDuration * frame.sampleRate) / 1000) +
-        predictionDelaySamples +
+        result.predictionDelaySamples +
         activationSamples;
       while (
         prefixFrames.length > 1 &&
@@ -493,8 +577,15 @@ class AicVADStream extends LiveKitVADStream {
       }
     };
 
-    const appendSpeechAudio = (frame: AudioFrame) => {
-      if (!speechBuffer) return;
+    const appendSpeechAudio = (frame: AudioFrame, predictionDelaySamples: number) => {
+      if (!speechBuffer) {
+        const maxSamples =
+          Math.trunc(
+            ((this.prefixPaddingDuration + this.maxBufferedSpeech) * frame.sampleRate) /
+              1000,
+          ) + predictionDelaySamples;
+        speechBuffer = new Int16Array(maxSamples);
+      }
       const remainingSamples = Math.max(0, speechBuffer.length - speechSamples);
       const copiedSamples = Math.min(frame.samplesPerChannel, remainingSamples);
       if (copiedSamples > 0) {
@@ -507,15 +598,23 @@ class AicVADStream extends LiveKitVADStream {
           "warn",
           "vad",
           "maximum buffered speech reached; ignoring further audio",
-          { modelName: this.model.getId(), maxBufferedSpeechMs: this.maxBufferedSpeech },
+          this.processor.diagnosticFields({
+            maxBufferedSpeechMs: this.maxBufferedSpeech,
+          }),
         );
       }
     };
 
     const speechEventFrames = (): AudioFrame[] => {
       if (!speechBuffer || speechSamples === 0) return [];
-      const snapshot = speechBuffer.slice(0, speechSamples);
-      return [new AudioFrame(snapshot, inputSampleRate, 1, speechSamples)];
+      return [
+        new AudioFrame(
+          speechBuffer.slice(0, speechSamples),
+          inputSampleRate,
+          1,
+          speechSamples,
+        ),
+      ];
     };
 
     while (!this.closed) {
@@ -526,83 +625,58 @@ class AicVADStream extends LiveKitVADStream {
         continue;
       }
 
-      if (inputSampleRate === 0) {
-        inputSampleRate = value.sampleRate;
-        inferenceBlockSize = this.model.getOptimalBlockSize(inputSampleRate);
-        const streamFormat: [number, number] = [inputSampleRate, inferenceBlockSize];
-        if (
-          !configuredFormat ||
-          configuredFormat[0] !== streamFormat[0] ||
-          configuredFormat[1] !== streamFormat[1]
-        ) {
-          try {
-            nativeVad.initialize(inputSampleRate, inferenceBlockSize, false);
-          } catch (error) {
-            throw new Error(
-              `ai-coustics VAD initialization failed (model=${this.model.getId()}, ` +
-                `sampleRate=${inputSampleRate}, blockSize=${inferenceBlockSize}): ` +
-                errorDetail(error),
-              { cause: error },
-            );
-          }
-          configuredFormat = streamFormat;
-          predictionDelaySamples = context.getPredictionDelay();
-        }
-        const maxSamples =
-          Math.trunc(
-            ((this.prefixPaddingDuration + this.maxBufferedSpeech) * inputSampleRate) /
-              1000,
-          ) + predictionDelaySamples;
-        speechBuffer = new Int16Array(maxSamples);
-      } else if (value.sampleRate !== inputSampleRate) {
-        writeLog(
-          "error",
-          "vad",
-          "received frame with a different sample rate",
-          {
-            modelName: this.model.getId(),
-            sampleRate: inputSampleRate,
-            receivedSampleRate: value.sampleRate,
-          },
-        );
-        continue;
-      }
-
-      appendInferenceAudio(toMono(value));
-
-      while (!this.closed && inferenceBuffer.length >= inferenceBlockSize) {
-        const pcm = inferenceBuffer.slice(0, inferenceBlockSize);
-        inferenceBuffer = inferenceBuffer.slice(inferenceBlockSize);
-        const block = pcm16ToFloat32(pcm);
-
-        const started = performance.now();
-        try {
-          // Keep the block at the incoming LiveKit rate. The SDK was initialized with that rate
-          // and performs the VAD model's resampling internally.
-          nativeVad.process(block);
-        } catch (error) {
-          throw new Error(
-            `ai-coustics VAD inference failed (model=${this.model.getId()}, ` +
-              `sampleRate=${inputSampleRate}, blockSize=${inferenceBlockSize}): ` +
-              errorDetail(error),
-            { cause: error },
+      const metadata = value.userdata[FRAME_USERDATA_VAD_ATTRIBUTE] as
+        | FrameMetadata
+        | undefined;
+      if (!metadata || !Array.isArray(metadata.results)) {
+        this.missingMetadataFrames += 1;
+        if (this.missingMetadataFrames === MISSING_METADATA_WARNING_FRAMES) {
+          writeLog(
+            "error",
+            "vad",
+            "no inference metadata found; pass vad.processor as RoomIO " +
+              "noiseCancellation (or place it first in FrameProcessorChain)",
+            this.processor.diagnosticFields({
+              missingMetadataFrames: this.missingMetadataFrames,
+            }),
           );
         }
-        const inferenceCompleted = performance.now();
-        const inferenceDurationMs = inferenceCompleted - started;
-        const probability = context.rawVadProbability();
-        const detected = context.isSpeechDetected();
-        const blockDurationMs = (inferenceBlockSize / inputSampleRate) * 1000;
-        processingBacklogMs = Math.max(
-          0,
-          processingBacklogMs + inferenceDurationMs - blockDurationMs,
+        continue;
+      }
+      this.missingMetadataFrames = 0;
+      if (metadata.error) {
+        throw new Error(metadata.error.message, { cause: metadata.error.cause });
+      }
+
+      for (const result of metadata.results) {
+        if (inputSampleRate === 0) inputSampleRate = result.sampleRate;
+        else if (result.sampleRate !== inputSampleRate) {
+          writeLog(
+            "error",
+            "vad",
+            "received frame with a different sample rate",
+            this.processor.diagnosticFields({
+              sampleRate: inputSampleRate,
+              receivedSampleRate: result.sampleRate,
+            }),
+          );
+          continue;
+        }
+
+        const inferenceAudio = new AudioFrame(
+          result.pcm,
+          result.sampleRate,
+          1,
+          result.pcm.length,
         );
-        const predictionDelayMs = (predictionDelaySamples / inputSampleRate) * 1000;
-        currentSample += inferenceBlockSize;
+        const blockDurationMs =
+          (inferenceAudio.samplesPerChannel / inputSampleRate) * 1000;
+        const predictionDelayMs =
+          (result.predictionDelaySamples / inputSampleRate) * 1000;
+        currentSample += inferenceAudio.samplesPerChannel;
         timestampMs += blockDurationMs;
 
-        const sensitivity = context.getParameter(AicVadParameter.Sensitivity);
-        if (probability >= sensitivity) {
+        if (result.probability >= result.sensitivity) {
           rawSpeechDurationMs += blockDurationMs;
           rawSilenceDurationMs = 0;
         } else {
@@ -613,18 +687,10 @@ class AicVADStream extends LiveKitVADStream {
           rawSpeechDurationMs > 0 ? rawSpeechDurationMs + predictionDelayMs : 0;
         const alignedRawSilenceDurationMs =
           rawSilenceDurationMs > 0 ? rawSilenceDurationMs + predictionDelayMs : 0;
-
         if (speaking) speechDurationMs += blockDurationMs;
         else silenceDurationMs += blockDurationMs;
-
-        const inferenceAudio = new AudioFrame(
-          pcm,
-          inputSampleRate,
-          1,
-          inferenceBlockSize,
-        );
-        updatePrefixBuffer(inferenceAudio);
-        if (speaking) appendSpeechAudio(inferenceAudio);
+        updatePrefixBuffer(inferenceAudio, result);
+        if (speaking) appendSpeechAudio(inferenceAudio, result.predictionDelaySamples);
 
         this.sendVADEvent({
           type: VADEventType.INFERENCE_DONE,
@@ -633,20 +699,23 @@ class AicVADStream extends LiveKitVADStream {
           speechDuration: speechDurationMs,
           silenceDuration: silenceDurationMs,
           frames: [inferenceAudio],
-          probability,
-          inferenceDuration: inferenceDurationMs,
+          probability: result.probability,
+          inferenceDuration: result.inferenceDurationMs,
           speaking,
           rawAccumulatedSilence: alignedRawSilenceDurationMs,
           rawAccumulatedSpeech: alignedRawSpeechDurationMs,
         });
 
-        if (detected && !speaking) {
+        if (result.detected && !speaking) {
           speaking = true;
           silenceDurationMs = 0;
           speechDurationMs = Math.max(blockDurationMs, alignedRawSpeechDurationMs);
+          speechBuffer = null;
           speechSamples = 0;
           speechBufferFull = false;
-          for (const prefixFrame of prefixFrames) appendSpeechAudio(prefixFrame);
+          for (const prefixFrame of prefixFrames) {
+            appendSpeechAudio(prefixFrame, result.predictionDelaySamples);
+          }
           this.sendVADEvent({
             type: VADEventType.START_OF_SPEECH,
             samplesIndex: currentSample,
@@ -654,13 +723,13 @@ class AicVADStream extends LiveKitVADStream {
             speechDuration: speechDurationMs,
             silenceDuration: 0,
             frames: speechEventFrames(),
-            probability,
-            inferenceDuration: inferenceDurationMs,
+            probability: result.probability,
+            inferenceDuration: result.inferenceDurationMs,
             speaking: true,
             rawAccumulatedSilence: 0,
             rawAccumulatedSpeech: alignedRawSpeechDurationMs,
           });
-        } else if (!detected && speaking) {
+        } else if (!result.detected && speaking) {
           speaking = false;
           silenceDurationMs = alignedRawSilenceDurationMs;
           const completedSpeechDurationMs = Math.max(
@@ -674,41 +743,16 @@ class AicVADStream extends LiveKitVADStream {
             speechDuration: completedSpeechDurationMs,
             silenceDuration: silenceDurationMs,
             frames: speechEventFrames(),
-            probability,
-            inferenceDuration: inferenceDurationMs,
+            probability: result.probability,
+            inferenceDuration: result.inferenceDurationMs,
             speaking: false,
             rawAccumulatedSilence: alignedRawSilenceDurationMs,
             rawAccumulatedSpeech: 0,
           });
           speechDurationMs = 0;
+          speechBuffer = null;
           speechSamples = 0;
           speechBufferFull = false;
-        }
-
-        if (processingBacklogMs === 0) {
-          slowWarningActive = false;
-        } else if (
-          processingBacklogMs >= SLOW_INFERENCE_BACKLOG_THRESHOLD_MS &&
-          (!slowWarningActive ||
-            inferenceCompleted - this.lastSlowWarning >= SLOW_WARNING_INTERVAL_MS)
-        ) {
-          slowWarningActive = true;
-          this.lastSlowWarning = inferenceCompleted;
-          writeLog(
-            "warn",
-            "vad",
-            "inference falling behind realtime",
-            {
-              inferenceDurationMs,
-              blockDurationMs,
-              realtimeFactor: inferenceDurationMs / blockDurationMs,
-              processingBacklogMs,
-              sampleRate: inputSampleRate,
-              blockSize: inferenceBlockSize,
-              modelName: this.model.getId(),
-              modelProvider: "ai-coustics",
-            },
-          );
         }
       }
     }

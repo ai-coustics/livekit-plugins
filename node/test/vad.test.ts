@@ -5,7 +5,7 @@ import {
   log,
   type VADStream,
 } from "@livekit/agents";
-import { AudioFrame } from "@livekit/rtc-node";
+import { AudioFrame, FrameProcessor } from "@livekit/rtc-node";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const sdk = vi.hoisted(() => {
@@ -139,7 +139,7 @@ vi.mock("@ai-coustics/aic-sdk", () => ({
   _setSdkId: (id: number) => sdk.nativeCalls.push(["sdk_id", id]),
 }));
 
-import { VAD, VADParameters } from "../src/index.js";
+import { FrameProcessorChain, VAD, VADParameters } from "../src/index.js";
 
 initializeLogger({ pretty: false, level: "silent" });
 
@@ -149,6 +149,30 @@ function makeFrame(
   channels = 1,
 ): AudioFrame {
   return new AudioFrame(data, sampleRate, channels, data.length / channels);
+}
+
+function pushProcessed(vad: VAD, stream: VADStream, frame: AudioFrame): void {
+  stream.pushFrame(vad.processor.process(frame));
+}
+
+class MutingProcessor extends FrameProcessor<AudioFrame> {
+  isEnabled(): boolean {
+    return true;
+  }
+
+  setEnabled(): void {}
+
+  process(frame: AudioFrame): AudioFrame {
+    return new AudioFrame(
+      new Int16Array(frame.samplesPerChannel),
+      frame.sampleRate,
+      1,
+      frame.samplesPerChannel,
+      frame.userdata,
+    );
+  }
+
+  close(): void {}
 }
 
 async function collectEvents(stream: VADStream) {
@@ -231,6 +255,8 @@ describe("VAD", () => {
       expect.objectContaining({
         plugin: "ai-coustics",
         component: "vad",
+        modelProvider: "ai-coustics",
+        modelName: "vad-test-model",
         parameter: "sensitivity",
         parameterValue: 2,
         errorMessage: "SDK rejected parameter",
@@ -254,7 +280,11 @@ describe("VAD", () => {
       [0.1, false],
     );
 
-    stream.pushFrame(makeFrame(Int16Array.from({ length: 640 }, (_, index) => index)));
+    pushProcessed(
+      vad,
+      stream,
+      makeFrame(Int16Array.from({ length: 640 }, (_, index) => index)),
+    );
     const events = await collectEvents(stream);
 
     expect(events.map((event) => event.type)).toEqual([
@@ -280,7 +310,7 @@ describe("VAD", () => {
     expect(events.at(-1)!.frames[0]!.data).toEqual(
       Int16Array.from({ length: 640 }, (_, index) => index),
     );
-    expect(native.terminateCalls).toBe(1);
+    expect(native.terminateCalls).toBe(0);
   });
 
   it("uses the input sample rate and accounts for the SDK prediction delay", async () => {
@@ -308,7 +338,7 @@ describe("VAD", () => {
       samples.fill(block + 1, block * 480, (block + 1) * 480);
     }
 
-    stream.pushFrame(makeFrame(samples, 48_000));
+    pushProcessed(vad, stream, makeFrame(samples, 48_000));
     const events = await collectEvents(stream);
     const start = events.find(
       (event) => event.type === VADEventType.START_OF_SPEECH,
@@ -336,7 +366,9 @@ describe("VAD", () => {
     const native = sdk.instances[0]!;
     native.predictions.push([0, false]);
 
-    stream.pushFrame(
+    pushProcessed(
+      vad,
+      stream,
       makeFrame(new Int16Array([1000, 3000, 2000, 4000, 3000, 5000, 4000, 6000]), 16_000, 2),
     );
     const events = await collectEvents(stream);
@@ -364,7 +396,11 @@ describe("VAD", () => {
       [0.1, false],
     );
 
-    stream.pushFrame(makeFrame(Int16Array.from({ length: 20 }, (_, index) => index + 1), 10));
+    pushProcessed(
+      vad,
+      stream,
+      makeFrame(Int16Array.from({ length: 20 }, (_, index) => index + 1), 10),
+    );
     const events = await collectEvents(stream);
     const starts = events.filter(
       (event) => event.type === VADEventType.START_OF_SPEECH,
@@ -379,7 +415,7 @@ describe("VAD", () => {
     ]);
   });
 
-  it("resets on flush and discards an incomplete inference block", async () => {
+  it("resets stream state on flush without repeating shared inference", async () => {
     const vad = new VAD({
       model: new sdk.FakeModel(16_000, 4),
       licenseKey: "test-license",
@@ -388,14 +424,14 @@ describe("VAD", () => {
     const native = sdk.instances[0]!;
     native.predictions.push([0, false]);
 
-    stream.pushFrame(makeFrame(new Int16Array([1, 2])));
+    pushProcessed(vad, stream, makeFrame(new Int16Array([1, 2])));
     stream.flush();
-    stream.pushFrame(makeFrame(new Int16Array([3, 4, 5, 6])));
+    pushProcessed(vad, stream, makeFrame(new Int16Array([3, 4, 5, 6])));
     await collectEvents(stream);
 
     expect(native.blocks).toHaveLength(1);
-    expect(native.blocks[0]).toEqual([3, 4, 5, 6].map((sample) => sample / 32768));
-    expect(native.context.resetCount).toBe(1);
+    expect(native.blocks[0]).toEqual([1, 2, 3, 4].map((sample) => sample / 32768));
+    expect(native.context.resetCount).toBe(0);
   });
 
   it("updates active and future streams", async () => {
@@ -404,50 +440,101 @@ describe("VAD", () => {
       licenseKey: "test-license",
     });
     const firstStream = vad.stream();
-    const firstNative = sdk.instances[0]!;
+    const native = sdk.instances[0]!;
 
     vad.setParameters({ sensitivity: 0.8, speechHoldDuration: 0.6 });
     const secondStream = vad.stream();
-    const secondNative = sdk.instances[1]!;
 
-    for (const native of [firstNative, secondNative]) {
-      expect(native.context.getParameter(sdk.VadParameter.Sensitivity)).toBe(0.8);
-      expect(native.context.getParameter(sdk.VadParameter.SpeechHoldDuration)).toBe(0.6);
-    }
+    expect(sdk.instances).toHaveLength(1);
+    expect(native.context.getParameter(sdk.VadParameter.Sensitivity)).toBe(0.8);
+    expect(native.context.getParameter(sdk.VadParameter.SpeechHoldDuration)).toBe(0.6);
     expect(vad.minSilenceDuration).toBe(600);
 
     await Promise.all([collectEvents(firstStream), collectEvents(secondStream)]);
   });
 
-  it("keeps a future stream usable when a stored parameter is rejected", async () => {
+  it("shares one inference result across multiple streams", async () => {
     const vad = new VAD({
       model: new sdk.FakeModel(),
       licenseKey: "test-license",
     });
     const firstStream = vad.stream();
-    vad.setParameters({ sensitivity: 0.8 });
-    sdk.FakeContext.parameterErrors.set(
-      sdk.VadParameter.Sensitivity,
-      new Error("SDK rejected stored parameter"),
-    );
-    const warning = vi.spyOn(log(), "warn");
-
     const secondStream = vad.stream();
-    const secondContext = sdk.instances[1]!.context;
+    const native = sdk.instances[0]!;
+    native.predictions.push([0.9, true], [0.1, false]);
+    const processed = vad.processor.process(makeFrame(new Int16Array(320)));
+    firstStream.pushFrame(processed);
+    secondStream.pushFrame(processed);
 
-    expect(secondContext.getParameter(sdk.VadParameter.Sensitivity)).toBe(0.5);
-    expect(warning).toHaveBeenCalledWith(
-      expect.objectContaining({
-        parameter: "sensitivity",
-        errorMessage: "SDK rejected stored parameter",
-      }),
-      "VAD: parameter rejected; keeping the current value",
+    const [firstEvents, secondEvents] = await Promise.all([
+      collectEvents(firstStream),
+      collectEvents(secondStream),
+    ]);
+    expect(sdk.instances).toHaveLength(1);
+    expect(native.blocks).toHaveLength(2);
+    expect(firstEvents.map((event) => event.type)).toEqual(
+      secondEvents.map((event) => event.type),
     );
-    warning.mockRestore();
-    await Promise.all([collectEvents(firstStream), collectEvents(secondStream)]);
+    expect(firstEvents.map((event) => event.probability)).toEqual(
+      secondEvents.map((event) => event.probability),
+    );
   });
 
-  it("terminates an immediately closed stream exactly once", () => {
+  it("logs missing metadata with the standard VAD context", async () => {
+    const vad = new VAD({
+      model: new sdk.FakeModel(),
+      licenseKey: "test-license",
+    });
+    vad.processor.onStreamInfoUpdated({
+      roomName: "room",
+      participantIdentity: "participant",
+      publicationSid: "TR_test",
+    });
+    const stream = vad.stream();
+    const errorLog = vi.spyOn(log(), "error");
+
+    for (let index = 0; index < 10; index += 1) {
+      stream.pushFrame(makeFrame(new Int16Array(160)));
+    }
+    await collectEvents(stream);
+
+    expect(errorLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        plugin: "ai-coustics",
+        component: "vad",
+        modelProvider: "ai-coustics",
+        modelName: "vad-test-model",
+        roomName: "room",
+        participantIdentity: "participant",
+        publicationSid: "TR_test",
+        missingMetadataFrames: 10,
+      }),
+      expect.stringContaining("VAD: no inference metadata found"),
+    );
+    errorLog.mockRestore();
+  });
+
+  it("runs VAD on original audio before a downstream processor replaces it", async () => {
+    const vad = new VAD({
+      model: new sdk.FakeModel(16_000, 4),
+      licenseKey: "test-license",
+    });
+    const stream = vad.stream();
+    const native = sdk.instances[0]!;
+    native.predictions.push([0.9, true]);
+    const chain = new FrameProcessorChain(vad.processor, new MutingProcessor());
+    const raw = new Int16Array([1000, 2000, 3000, 4000]);
+
+    const output = chain.process(makeFrame(raw));
+    stream.pushFrame(output);
+    const events = await collectEvents(stream);
+
+    expect(native.blocks[0]).toEqual(Array.from(raw, (sample) => sample / 32768));
+    expect(Array.from(output.data)).toEqual([0, 0, 0, 0]);
+    expect(Array.from(events[0]!.frames[0]!.data)).toEqual(Array.from(raw));
+  });
+
+  it("keeps the shared native session alive until the processor closes", () => {
     const vad = new VAD({
       model: new sdk.FakeModel(),
       licenseKey: "test-license",
@@ -458,6 +545,9 @@ describe("VAD", () => {
     stream.close();
     stream.close();
 
+    expect(native.terminateCalls).toBe(0);
+    vad.processor.close();
+    vad.processor.close();
     expect(native.terminateCalls).toBe(1);
   });
 
@@ -469,12 +559,12 @@ describe("VAD", () => {
     const stream = vad.stream();
     const native = sdk.instances[0]!;
     native.initializeError = new Error("unsupported configuration");
-    stream.pushFrame(makeFrame(new Int16Array(480), 48_000));
+    pushProcessed(vad, stream, makeFrame(new Int16Array(480), 48_000));
 
     await expect(collectEvents(stream)).rejects.toThrow(
       "ai-coustics VAD initialization failed (model=vad-test-model, sampleRate=48000, blockSize=480): unsupported configuration",
     );
-    expect(native.terminateCalls).toBe(1);
+    expect(native.terminateCalls).toBe(0);
   });
 
   it("adds model and audio-format context to inference errors", async () => {
@@ -485,12 +575,28 @@ describe("VAD", () => {
     const stream = vad.stream();
     const native = sdk.instances[0]!;
     native.processError = new Error("native failure");
-    stream.pushFrame(makeFrame(new Int16Array(480), 48_000));
+    const errorLog = vi.spyOn(log(), "error");
+    pushProcessed(vad, stream, makeFrame(new Int16Array(480), 48_000));
 
     await expect(collectEvents(stream)).rejects.toThrow(
       "ai-coustics VAD inference failed (model=vad-test-model, sampleRate=48000, blockSize=480): native failure",
     );
-    expect(native.terminateCalls).toBe(1);
+    expect(native.terminateCalls).toBe(0);
+    expect(errorLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        plugin: "ai-coustics",
+        component: "vad",
+        modelProvider: "ai-coustics",
+        modelName: "vad-test-model",
+        sampleRate: 48_000,
+        blockSize: 480,
+        errorType: "Error",
+        errorMessage: expect.stringContaining("native failure"),
+        error: expect.any(Error),
+      }),
+      "VAD: stream failed",
+    );
+    errorLog.mockRestore();
   });
 
   it.each([

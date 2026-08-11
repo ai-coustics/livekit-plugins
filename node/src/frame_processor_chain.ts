@@ -1,7 +1,6 @@
 import {
   FrameProcessor,
   type AudioFrame,
-  type FrameProcessorCredentials,
   type FrameProcessorStreamInfo,
   type VideoFrame,
 } from "@livekit/rtc-node";
@@ -43,18 +42,6 @@ export class FrameProcessorChain<
   override onStreamInfoCleared(): void {
     for (const processor of this.processors) {
       processor.onStreamInfoCleared();
-    }
-  }
-
-  override onCredentialsUpdated(credentials: FrameProcessorCredentials): void {
-    for (const processor of this.processors) {
-      processor.onCredentialsUpdated(credentials);
-    }
-  }
-
-  override onCredentialsCleared(): void {
-    for (const processor of this.processors) {
-      processor.onCredentialsCleared();
     }
   }
 
