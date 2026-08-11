@@ -59,7 +59,7 @@ import { Model } from "@ai-coustics/livekit-plugin";
 
 const enhancementPath = Model.download("quail-vf-2.2-l-16khz", "./models");
 const vadPath = Model.download("vad-2.1-xxs-16khz", "./models");
-const analysisPath = Model.download("tyto-l-16khz", "./models");
+const analysisPath = Model.download("tyto-1.1-l-16khz", "./models");
 ```
 
 Enhancement and VAD models are different model types. Make the returned paths available to your

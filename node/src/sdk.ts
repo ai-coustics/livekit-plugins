@@ -8,7 +8,7 @@ import {
   _setSdkId as nativeSetSdkId,
 } from "@ai-coustics/aic-sdk";
 
-/** Public structural types for aic-sdk 0.22, which does not ship TypeScript declarations. */
+/** Public structural types for aic-sdk 0.23, which does not ship TypeScript declarations. */
 export interface Model {
   getId(): string;
   getOptimalSampleRate(): number;
