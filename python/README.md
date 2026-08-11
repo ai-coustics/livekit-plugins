@@ -57,7 +57,7 @@ from livekit.plugins import ai_coustics
 
 enhancement_path = ai_coustics.Model.download("quail-vf-2.2-l-16khz", "./models")
 vad_path = ai_coustics.Model.download("vad-2.1-xxs-16khz", "./models")
-analysis_path = ai_coustics.Model.download("tyto-l-16khz", "./models")
+analysis_path = ai_coustics.Model.download("tyto-1.1-l-16khz", "./models")
 ```
 
 Enhancement and VAD models are different model types. Make the returned paths available to your
