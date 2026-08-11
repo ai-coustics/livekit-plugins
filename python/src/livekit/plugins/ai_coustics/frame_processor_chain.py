@@ -8,14 +8,10 @@ Frame = TypeVar("Frame", bound=rtc.AudioFrame | rtc.VideoFrame)
 
 
 class FrameProcessorChain(rtc.FrameProcessor[Frame]):
-    """Run two frame processors in sequence and close both with the chain."""
+    """Run frame processors in sequence and close them with the chain."""
 
-    def __init__(
-        self,
-        first: rtc.FrameProcessor[Frame],
-        second: rtc.FrameProcessor[Frame],
-    ) -> None:
-        self._processors = (first, second)
+    def __init__(self, *processors: rtc.FrameProcessor[Frame]) -> None:
+        self._processors = processors
         self._enabled = True
         self._closed = False
 

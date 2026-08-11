@@ -79,11 +79,29 @@ describe("FrameProcessorChain", () => {
     expect(calls).toEqual([]);
   });
 
-  it("forwards stream lifecycle to both children in order", () => {
+  it("processes an arbitrary number of children", () => {
+    const calls: Call[] = [];
+    const frames = Array.from({ length: 4 }, (_, value) => makeFrame(value));
+    const chain = new FrameProcessorChain(
+      new RecordingProcessor("first", calls, frames[1]),
+      new RecordingProcessor("second", calls, frames[2]),
+      new RecordingProcessor("third", calls, frames[3]),
+    );
+
+    expect(chain.process(frames[0]!)).toBe(frames[3]);
+    expect(calls).toEqual([
+      ["first", frames[0]],
+      ["second", frames[1]],
+      ["third", frames[2]],
+    ]);
+  });
+
+  it("forwards stream lifecycle to all children in order", () => {
     const calls: Call[] = [];
     const chain = new FrameProcessorChain(
       new RecordingProcessor("first", calls),
       new RecordingProcessor("second", calls),
+      new RecordingProcessor("third", calls),
     );
     const streamInfo = {
       roomName: "room",
@@ -99,16 +117,19 @@ describe("FrameProcessorChain", () => {
     expect(calls).toEqual([
       ["first", ["stream", streamInfo]],
       ["second", ["stream", streamInfo]],
+      ["third", ["stream", streamInfo]],
       ["first", "streamCleared"],
       ["second", "streamCleared"],
+      ["third", "streamCleared"],
     ]);
   });
 
-  it("is idempotent and closes both children after an error", () => {
+  it("is idempotent and closes all children after an error", () => {
     const calls: Call[] = [];
     const chain = new FrameProcessorChain(
       new RecordingProcessor("first", calls, undefined, new Error("failed")),
       new RecordingProcessor("second", calls),
+      new RecordingProcessor("third", calls),
     );
 
     expect(() => chain.close()).toThrow("failed");
@@ -117,6 +138,7 @@ describe("FrameProcessorChain", () => {
     expect(calls).toEqual([
       ["first", "close"],
       ["second", "close"],
+      ["third", "close"],
     ]);
     expect(chain.isEnabled()).toBe(false);
   });
