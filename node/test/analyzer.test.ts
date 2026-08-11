@@ -58,8 +58,8 @@ const sdk = vi.hoisted(() => {
         speakerReverb: 0.2,
         speakerLoudness: 0.3,
         interferingSpeech: 0.4,
-        mediaSpeech: 0.5,
-        noise: 0.6,
+        noise: 0.5,
+        codecDegradation: 0.6,
         packetLoss: 0.7,
       };
     }

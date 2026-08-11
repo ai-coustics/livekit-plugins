@@ -25,8 +25,8 @@ class FakeResult:
     speaker_reverb: float = 0.2
     speaker_loudness: float = 0.3
     interfering_speech: float = 0.4
-    media_speech: float = 0.5
-    noise: float = 0.6
+    noise: float = 0.5
+    codec_degradation: float = 0.6
     packet_loss: float = 0.7
 
 

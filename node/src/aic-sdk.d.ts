@@ -12,8 +12,8 @@ declare module "@ai-coustics/aic-sdk" {
     speakerReverb: number;
     speakerLoudness: number;
     interferingSpeech: number;
-    mediaSpeech: number;
     noise: number;
+    codecDegradation: number;
     packetLoss: number;
   }
 

@@ -39,8 +39,8 @@ const resultFields = [
   ["speaker_reverb", "speakerReverb"],
   ["speaker_loudness", "speakerLoudness"],
   ["interfering_speech", "interferingSpeech"],
-  ["media_speech", "mediaSpeech"],
   ["noise", "noise"],
+  ["codec_degradation", "codecDegradation"],
   ["packet_loss", "packetLoss"],
 ] as const satisfies ReadonlyArray<readonly [string, keyof AnalysisResult]>;
 
