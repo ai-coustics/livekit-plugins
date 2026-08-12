@@ -160,7 +160,7 @@ jobs:
           if npm view "$name@$version" version >/dev/null 2>&1; then
             echo "$name@$version is already published"
           else
-            npm publish dist/*.tgz --access public
+            npm publish ./dist/*.tgz --access public
           fi
 
   github-release:
