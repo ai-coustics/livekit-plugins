@@ -20,6 +20,10 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python-version }}
+      # Keep uv.lock in step with pyproject.toml. Dependency scanners read the
+      # lockfile, so a stale one silently misreports the dependency tree. This
+      # runs before `uv sync`, which would otherwise re-lock and mask the drift.
+      - run: uv lock --check
       - run: uv sync --dev
       - run: uv run ruff check .
       - run: uv run ruff format --check .

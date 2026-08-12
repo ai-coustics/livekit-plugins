@@ -377,7 +377,19 @@ artifacts. The GitHub release is created only after both registry publications s
 
 Repository and registry configuration required by the publish jobs:
 
-- A GitHub `publish` environment, optionally with required reviewers.
-- A `PYPI_API_TOKEN` secret available to that environment.
+- A GitHub `publish` environment, restricted to `*.*.*` tags, optionally with required reviewers.
+- A PyPI trusted publisher for `ai-coustics-livekit-plugin`, restricted to this repository,
+  `release.yml`, and the `publish` environment. The publish job authenticates over OIDC and
+  stores no PyPI token.
 - An npm trusted publisher for `@ai-coustics/livekit-plugin`, restricted to this repository,
-  `.github/workflows/release.yml`, and the `publish` environment.
+  `.github/workflows/release.yml`, and the `publish` environment. npm only allows a trusted
+  publisher on a package that already exists, so the first release authenticates with an
+  `NPM_TOKEN` secret in the `publish` environment. Configure the trusted publisher and delete
+  that secret once the package is on the registry.
+
+## Dependency scanning
+
+Both lockfiles are committed and are the input our dependency scanning reads: `python/uv.lock`
+and `node/package-lock.json`. Keep them in step with their manifests. `npm ci` fails on a stale
+`package-lock.json`, and CI runs `uv lock --check` for the same reason on the Python side. Do not
+add either lockfile to `.gitignore`.

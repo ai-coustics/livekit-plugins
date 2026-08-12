@@ -105,6 +105,9 @@ jobs:
     needs: [build-python, build-node]
     runs-on: ubuntu-latest
     environment: publish
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Download Python distribution
         uses: actions/download-artifact@v8
@@ -112,11 +115,12 @@ jobs:
           name: python-dist
           path: dist
 
+      # Authenticates through PyPI trusted publishing (OIDC). No API token is
+      # stored: PyPI verifies this repository, workflow file, and environment.
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
-          password: ${{ secrets.PYPI_API_TOKEN }}
           skip-existing: true
 
   publish-node:
