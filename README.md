@@ -14,6 +14,19 @@ Applications choose and provision the SDK models themselves. This keeps model se
 and deployment under application control while the plugins handle LiveKit audio formats, stream
 lifecycle, observability, and error recovery.
 
+## Which integration should I use?
+
+The official LiveKit plugins are the recommended integration path for most applications. They
+support LiveKit Cloud, integrate more deeply with the LiveKit framework and tooling, and offer
+stronger stability guarantees. Avoiding breaking changes is an explicit goal of the official
+plugins.
+
+The ai-coustics-maintained plugins in this repository follow a faster release cadence and are
+designed for teams that want early access to the latest ai-coustics models and product features.
+Some of those capabilities may be experimental and subject to change, and use of these plugins is
+billed separately through ai-coustics. Choose them when early adoption of new ai-coustics
+capabilities is important for your application.
+
 ## Packages
 
 | Runtime | Package | Documentation |
@@ -25,9 +38,10 @@ The runtime guides cover migration from the official plugins, model provisioning
 integration, Processor enhancement settings, VAD parameters, authentication, and operational
 constraints.
 
-> These packages replace LiveKit's official `livekit-plugins-ai-coustics` and
-> `@livekit/plugins-ai-coustics` packages; they are not extensions of them. Uninstall the official
-> package for your runtime before migrating, and do not mix objects from the two implementations.
+> These packages are alternatives to LiveKit's official `livekit-plugins-ai-coustics` and
+> `@livekit/plugins-ai-coustics` packages, not extensions of them. If you choose to migrate,
+> uninstall the official package for your runtime and do not mix objects from the two
+> implementations.
 
 ## Repository contents
 
