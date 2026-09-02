@@ -3,10 +3,24 @@
 Audio enhancement, voice activity detection, and audio-quality analysis for LiveKit Agents, backed by the public
 `@ai-coustics/aic-sdk` package.
 
-> This package replaces `@livekit/plugins-ai-coustics`. Uninstall the official package before
-> migrating, and do not mix objects from the two implementations.
+> [!IMPORTANT]
+> The official
+> [`@livekit/plugins-ai-coustics`](https://www.npmjs.com/package/@livekit/plugins-ai-coustics)
+> package is the recommended integration path for most applications. It supports LiveKit Cloud,
+> integrates more deeply with the LiveKit ecosystem and tooling, and offers stronger stability
+> guarantees. Avoiding breaking changes is an explicit goal of the official plugin.
+>
+> This ai-coustics-maintained package follows a faster release cadence and is designed for teams
+> that want early access to the latest ai-coustics models and product features. Some of those
+> capabilities may be experimental and subject to change, and use of this package is billed
+> separately through ai-coustics. Choose it when early adoption of new ai-coustics capabilities is
+> important for your application.
 
 ## Installation
+
+> This package is an alternative to `@livekit/plugins-ai-coustics`, not an extension of it. If you
+> choose to migrate, uninstall the official package and do not mix objects from the two
+> implementations.
 
 ```bash
 npm uninstall @livekit/plugins-ai-coustics
