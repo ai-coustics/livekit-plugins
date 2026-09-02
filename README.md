@@ -40,7 +40,7 @@ constraints.
 > These packages are alternatives to LiveKit's official
 > [`livekit-plugins-ai-coustics`](https://pypi.org/project/livekit-plugins-ai-coustics/) and
 > [`@livekit/plugins-ai-coustics`](https://www.npmjs.com/package/@livekit/plugins-ai-coustics)
-> packages, not extensions of them. If you choose to migrate, uninstall the official package for
+> packages, not extensions of them. If you choose to migrate, uninstall the official packages for
 > your runtime and do not mix objects from the two implementations.
 
 ## Repository contents
