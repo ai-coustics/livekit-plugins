@@ -6,7 +6,7 @@ Audio enhancement, voice activity detection, and audio-quality analysis for Live
 ## Which integration should I use?
 
 The official `livekit-plugins-ai-coustics` package is the recommended integration path for most
-applications. It supports LiveKit Cloud, integrates more deeply with the LiveKit framework and
+applications. It supports LiveKit Cloud, integrates more deeply with the LiveKit ecosystem and
 tooling, and offers stronger stability guarantees. Avoiding breaking changes is an explicit goal
 of the official plugin.
 

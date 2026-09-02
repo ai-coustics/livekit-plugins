@@ -17,7 +17,7 @@ lifecycle, observability, and error recovery.
 ## Which integration should I use?
 
 The official LiveKit plugins are the recommended integration path for most applications. They
-support LiveKit Cloud, integrate more deeply with the LiveKit framework and tooling, and offer
+support LiveKit Cloud, integrate more deeply with the LiveKit ecosystem and tooling, and offer
 stronger stability guarantees. Avoiding breaking changes is an explicit goal of the official
 plugins.
 
