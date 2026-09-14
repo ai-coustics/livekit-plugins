@@ -117,7 +117,7 @@ export class Collector extends FrameProcessor<AudioFrame> {
     this.collectingEnabled = enabled;
   }
 
-  /** True while the collector is feeding fresh audio the analyzer can act on. */
+  /** True while the collector has collected some audio the analyzer can act on. */
   get initialized(): boolean {
     return (
       this.collectingEnabled && this.hasBufferedAudio && this.nativeCollector !== null
