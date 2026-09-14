@@ -94,7 +94,9 @@ class Collector(rtc.FrameProcessor[rtc.AudioFrame]):
 
     @property
     def initialized(self) -> bool:
-        return self._has_buffered_audio and self._collector is not None
+        """True while the collector is feeding fresh audio the analyzer can act on."""
+
+        return self._enabled and self._has_buffered_audio and self._collector is not None
 
     @property
     def stream_info(self) -> dict[str, str]:
