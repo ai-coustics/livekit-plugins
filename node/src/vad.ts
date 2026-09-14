@@ -193,6 +193,20 @@ export class VADProcessor extends FrameProcessor<AudioFrame> {
           error,
         );
       }
+      try {
+        nativeVad.dispose();
+      } catch (error) {
+        writeLog(
+          "error",
+          "vad",
+          "native disposal failed",
+          this.diagnosticFields({
+            errorType: error instanceof Error ? error.name : typeof error,
+            errorMessage: errorDetail(error),
+          }),
+          error,
+        );
+      }
     }
   }
 

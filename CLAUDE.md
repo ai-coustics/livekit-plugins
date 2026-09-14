@@ -94,6 +94,10 @@ bearer-token changes. Node's `sdk.ts` is a thin re-export boundary over the decl
 0.24 ships; it only hand-mirrors `ProcessorParameter` and `VadParameter`, which are `const enum`s
 and so have no runtime form of their own.
 
+In Node, `close()` on all three components terminates the SDK session and then calls the SDK's
+`dispose()`; disposal is idempotent and any later call on a disposed instance throws, so close
+clears native references before disposing. Python relies on binding finalization instead.
+
 **Fail-open is a hard invariant.** Any processing error is logged and the *original* frame is
 returned; room audio must keep flowing whatever the SDK does. Repeated failures and
 slower-than-realtime warnings are rate-limited, with recovery/close records summarizing affected

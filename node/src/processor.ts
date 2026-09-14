@@ -286,6 +286,11 @@ export class Processor extends FrameProcessor<AudioFrame> {
         error,
       );
     }
+    try {
+      processor.dispose();
+    } catch (error) {
+      this.writeLog("error", "native disposal failed", {}, false, error);
+    }
 
     const summary = this.diagnosticFields({
       frameCount: this.frameCount,

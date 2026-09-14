@@ -48,11 +48,18 @@ by LiveKit's streaming turn detector. Because the SDK hold uses a rolling-majori
 wrapper also keeps an active LiveKit speech segment open until that much continuous raw silence
 has accumulated. Explicit `VADParameters` values still take precedence.
 
-Each `Analyzer` owns one SDK collector/analyzer pair. Its public `collector` is a transparent
+Each `Analyzer` owns one SDK analysis instance: a collector/analyzer pair in Python, a single
+`Analyzer` carrying both halves in Node since aic-sdk 0.24. Its public `collector` is a transparent
 `FrameProcessor` installed in RoomIO's `noise_cancellation` slot: it lazily initializes from the
 first frame, downmixes PCM16 input to mono float32, buffers it, and returns the original frame
 unchanged. Stream boundaries reset the analyzer. Closing either the analyzer or its collector
 stops scheduling and terminates the SDK telemetry session.
+
+In Node, every component's `close()` follows its `terminateSession()` with the SDK's `dispose()`,
+releasing the native instance at a known point instead of leaving it to garbage collection.
+Disposal is idempotent, and any call on a disposed instance throws, so each `close()` clears its
+native references first and every `process()` guards on them. Python has no equivalent call and
+relies on the binding's own finalization.
 
 `FrameProcessorChain` forwards stream-info lifecycle hooks and applies any number of enabled
 processors in constructor order. It lets a `Processor`, VAD processor, and Collector share

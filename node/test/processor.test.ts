@@ -102,6 +102,7 @@ const sdk = vi.hoisted(() => {
     readonly blocks: number[][] = [];
     error: Error | null = null;
     terminateCalls = 0;
+    disposeCalls = 0;
 
     constructor() {
       if (FakeProcessor.constructorError) {
@@ -127,6 +128,10 @@ const sdk = vi.hoisted(() => {
 
     terminateSession(): void {
       this.terminateCalls += 1;
+    }
+
+    dispose(): void {
+      this.disposeCalls += 1;
     }
   }
 
@@ -444,6 +449,7 @@ describe("Processor", () => {
 
     enhancer.close();
     expect(processor.terminateCalls).toBe(1);
+    expect(processor.disposeCalls).toBe(1);
     expect(enhancer.process(frame)).toBe(frame);
     const summary = logging.calls.find(
       ({ message }) => message === "Processor: closed",
