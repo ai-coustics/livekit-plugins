@@ -15,7 +15,6 @@ import {
   type Model,
   Vad as AicVad,
   type VadContext,
-  type VadInstance,
   VadParameter as AicVadParameter,
   setSdkId,
 } from "./sdk.js";
@@ -83,7 +82,7 @@ function errorDetail(error: unknown): string {
 export class VADProcessor extends FrameProcessor<AudioFrame> {
   private readonly model: Model;
   private readonly modelId: string;
-  private nativeVad: VadInstance | null;
+  private nativeVad: AicVad | null;
   private context: VadContext | null;
   private processorEnabled = true;
   private closed = false;
@@ -98,7 +97,7 @@ export class VADProcessor extends FrameProcessor<AudioFrame> {
   constructor(model: Model, licenseKey: string) {
     super();
     setSdkId(9);
-    let nativeVad: VadInstance;
+    let nativeVad: AicVad;
     try {
       nativeVad = new AicVad(model, licenseKey);
     } catch (error) {
@@ -273,7 +272,7 @@ export class VADProcessor extends FrameProcessor<AudioFrame> {
       results.push({
         pcm,
         sampleRate: frame.sampleRate,
-        probability: context.rawVadProbability(),
+        probability: context.getRawVadProbability(),
         detected: context.isSpeechDetected(),
         sensitivity: context.getParameter(AicVadParameter.Sensitivity),
         speechHoldDuration: context.getParameter(

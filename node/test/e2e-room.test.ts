@@ -177,8 +177,10 @@ describeIf("Processor and VAD in a real AgentSession room", () => {
     "processes microphone audio and consumes VAD events after the license grace period",
     async () => {
       fs.mkdirSync(modelDir, { recursive: true });
-      const model = Model.fromFile(Model.download(modelId, modelDir));
-      const vadModel = Model.fromFile(Model.download(vadModelId, modelDir));
+      const model = Model.fromFile(await Model.download(modelId, modelDir));
+      const vadModel = Model.fromFile(
+        await Model.download(vadModelId, modelDir),
+      );
       const processor = new ObservedProcessor({ model });
       const detector = new ObservedVAD({ model: vadModel });
       const frameProcessor = new FrameProcessorChain(detector.processor, processor);

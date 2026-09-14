@@ -8,13 +8,13 @@ Two independently built packages that are functional mirrors of each other:
 
 - `python/` — `ai-coustics-livekit-plugin`, importable as `livekit.plugins.ai_coustics` (namespace
   package under `python/src/livekit/plugins/ai_coustics/`), built on `aic-sdk` 3.2.
-- `node/` — `@ai-coustics/livekit-plugin` (`node/src/`), built on `@ai-coustics/aic-sdk` 0.23.
+- `node/` — `@ai-coustics/livekit-plugin` (`node/src/`), built on `@ai-coustics/aic-sdk` 0.24.
 
 Run all commands from inside `python/` or `node/`; there is no root-level build. The two packages
-are released in lockstep and must always carry the same version. Their SDK pins must also resolve
-to the same ai-coustics native core, which the bindings report through `get_sdk_version()` /
-`getVersion()` rather than through their own package version: `aic-sdk` 3.2 for Python wraps core
-0.24, while Node is still on core 0.23.
+are released in lockstep and must always carry the same version. Their SDK pins must resolve to the
+same ai-coustics native core, which the bindings report through `get_sdk_version()` / `getVersion()`
+rather than through their own package version: `aic-sdk` 3.2 for Python and 0.24 for Node both wrap
+core 0.24.
 
 `DEVELOPMENT.md` is the authoritative long-form document for architecture rationale, the logging
 convention, the local end-to-end environment, release steps, and the planned upstream LiveKit
@@ -87,8 +87,9 @@ Four public objects, each mirrored across both runtimes:
   the enhancement `Processor`, so VAD and analysis see original input audio.
 
 `ProcessorContext` wraps the SDK context purely to add structured logging around parameter and
-bearer-token changes. Node's `sdk.ts` hand-declares structural types because aic-sdk 0.23 ships no
-TypeScript declarations.
+bearer-token changes. Node's `sdk.ts` is a thin re-export boundary over the declarations aic-sdk
+0.24 ships; it only hand-mirrors `ProcessorParameter` and `VadParameter`, which are `const enum`s
+and so have no runtime form of their own.
 
 **Fail-open is a hard invariant.** Any processing error is logged and the *original* frame is
 returned; room audio must keep flowing whatever the SDK does. Repeated failures and

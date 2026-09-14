@@ -86,10 +86,12 @@ const sdk = vi.hoisted(() => {
       return new FakeModel();
     }
 
-    static download(modelId: string, downloadDir: string): string {
+    static async download(modelId: string, downloadDir: string): Promise<string> {
       this.downloadCalls.push([modelId, downloadDir]);
       return `${downloadDir}/${modelId}.aicmodel`;
     }
+
+    dispose(): void {}
   }
 
   class FakeProcessor {
@@ -516,8 +518,8 @@ describe("Processor", () => {
     now.mockRestore();
   });
 
-  it("exposes SDK model download and file loading", () => {
-    const modelPath = Model.download(
+  it("exposes SDK model download and file loading", async () => {
+    const modelPath = await Model.download(
       "quail-vf-2.2-l-16khz",
       "/tmp/aic-test-models",
     );

@@ -40,7 +40,7 @@ const sdk = vi.hoisted(() => {
       return this.detected;
     }
 
-    rawVadProbability(): number {
+    getRawVadProbability(): number {
       return this.probability;
     }
 
@@ -76,6 +76,8 @@ const sdk = vi.hoisted(() => {
     getOptimalBlockSize(sampleRate: number): number {
       return Math.round((this.blockSize * sampleRate) / this.sampleRate);
     }
+
+    dispose(): void {}
   }
 
   class FakeVad {

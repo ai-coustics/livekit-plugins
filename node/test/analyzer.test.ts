@@ -31,9 +31,14 @@ const telemetry = vi.hoisted(() => {
 });
 
 const sdk = vi.hoisted(() => {
-  class FakeCollector {
+  class FakeAnalyzer {
     initializations: Array<[number, number, boolean]> = [];
     blocks: number[][] = [];
+    analyzeCalls = 0;
+    resetCalls = 0;
+    terminateCalls = 0;
+    disposeCalls = 0;
+    error: Error | null = null;
 
     initialize(sampleRate: number, blockSize: number, variable: boolean): void {
       this.initializations.push([sampleRate, blockSize, variable]);
@@ -42,15 +47,8 @@ const sdk = vi.hoisted(() => {
     buffer(samples: Float32Array): void {
       this.blocks.push(Array.from(samples));
     }
-  }
 
-  class FakeAnalyzer {
-    analyzeCalls = 0;
-    resetCalls = 0;
-    terminateCalls = 0;
-    error: Error | null = null;
-
-    analyzeBuffered() {
+    analyze() {
       this.analyzeCalls += 1;
       if (this.error) throw this.error;
       return {
@@ -72,13 +70,16 @@ const sdk = vi.hoisted(() => {
       this.terminateCalls += 1;
     }
 
+    dispose(): void {
+      this.disposeCalls += 1;
+    }
+
     updateBearerToken(): void {}
   }
 
-  const collectors: FakeCollector[] = [];
   const analyzers: FakeAnalyzer[] = [];
   const sdkIds: number[] = [];
-  return { FakeCollector, FakeAnalyzer, collectors, analyzers, sdkIds };
+  return { FakeAnalyzer, analyzers, sdkIds };
 });
 
 vi.mock("@ai-coustics/aic-sdk", () => ({
@@ -91,12 +92,12 @@ vi.mock("@ai-coustics/aic-sdk", () => ({
     Sensitivity: 3,
     MinimumSpeechDuration: 4,
   },
-  analyzerPair: () => {
-    const collector = new sdk.FakeCollector();
-    const analyzer = new sdk.FakeAnalyzer();
-    sdk.collectors.push(collector);
-    sdk.analyzers.push(analyzer);
-    return { collector, analyzer };
+  Analyzer: class {
+    constructor() {
+      const analyzer = new sdk.FakeAnalyzer();
+      sdk.analyzers.push(analyzer);
+      return analyzer;
+    }
   },
   _setSdkId: (id: number) => sdk.sdkIds.push(id),
 }));
@@ -141,7 +142,6 @@ describe("Analyzer", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     logging.calls.length = 0;
-    sdk.collectors.length = 0;
     sdk.analyzers.length = 0;
     sdk.sdkIds.length = 0;
     telemetry.measurements.analysis.length = 0;
@@ -164,8 +164,8 @@ describe("Analyzer", () => {
 
     const frame = makeFrame(2);
     expect(analyzer.collector.process(frame)).toBe(frame);
-    expect(sdk.collectors[0]!.initializations).toEqual([[16000, 4, false]]);
-    expect(sdk.collectors[0]!.blocks[0]).toEqual([
+    expect(sdk.analyzers[0]!.initializations).toEqual([[16000, 4, false]]);
+    expect(sdk.analyzers[0]!.blocks[0]).toEqual([
       32767 / 32768,
       -1,
       0.5,
@@ -176,6 +176,7 @@ describe("Analyzer", () => {
     expect(sdk.analyzers[0]!.resetCalls).toBe(1);
     analyzer.close();
     expect(sdk.analyzers[0]!.terminateCalls).toBe(1);
+    expect(sdk.analyzers[0]!.disposeCalls).toBe(1);
   });
 
   it("analyzes on the configured interval and emits without logging the result", () => {

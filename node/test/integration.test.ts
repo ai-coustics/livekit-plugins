@@ -82,9 +82,9 @@ function frame(index: number, channels = 1): AudioFrame {
 describeIf("native Processor integration", () => {
   let model: ReturnType<typeof Model.fromFile>;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     fs.mkdirSync(modelDir, { recursive: true });
-    model = Model.fromFile(Model.download(modelId, modelDir));
+    model = Model.fromFile(await Model.download(modelId, modelDir));
   });
 
   it("processes 50 ms frames with a downloaded model", () => {
@@ -123,9 +123,9 @@ describeIf("native Processor integration", () => {
 describeIf("native VAD integration", () => {
   let model: ReturnType<typeof Model.fromFile>;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     fs.mkdirSync(modelDir, { recursive: true });
-    model = Model.fromFile(Model.download(vadModelId, modelDir));
+    model = Model.fromFile(await Model.download(vadModelId, modelDir));
   });
 
   it("runs the SDK at the LiveKit input rate without plugin resampling", async () => {
@@ -219,9 +219,9 @@ describeIf("native VAD integration", () => {
 describeIf("native Analyzer integration", () => {
   let model: ReturnType<typeof Model.fromFile>;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     fs.mkdirSync(modelDir, { recursive: true });
-    model = Model.fromFile(Model.download(analysisModelId, modelDir));
+    model = Model.fromFile(await Model.download(analysisModelId, modelDir));
   });
 
   it("emits the current SDK result schema", async () => {

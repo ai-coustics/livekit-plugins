@@ -10,11 +10,9 @@ import {
 import { writeLog } from "./log.js";
 import { pcm16ToFloat32 } from "./processor.js";
 import {
+  Analyzer as AicAnalyzer,
   type AnalysisResult,
-  type AnalyzerInstance,
-  type CollectorInstance,
   type Model,
-  analyzerPair,
   setSdkId,
 } from "./sdk.js";
 
@@ -85,9 +83,14 @@ function errorDetail(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Transparent LiveKit frame processor that collects audio for an Analyzer. */
+/**
+ * Transparent LiveKit frame processor that collects audio for an Analyzer.
+ *
+ * Holds the same native analyzer as its owning {@link Analyzer} but only ever calls the
+ * buffering half of that API, which does not take the analyzer lock.
+ */
 export class Collector extends FrameProcessor<AudioFrame> {
-  private nativeCollector: CollectorInstance | null;
+  private nativeAnalyzer: AicAnalyzer | null;
   private readonly resetAnalyzer: () => void;
   private readonly closeAnalyzer: () => void;
   private streamFormat: [number, number, number] | null = null;
@@ -97,12 +100,12 @@ export class Collector extends FrameProcessor<AudioFrame> {
   private closed = false;
 
   constructor(
-    nativeCollector: CollectorInstance,
+    nativeAnalyzer: AicAnalyzer,
     resetAnalyzer: () => void,
     closeAnalyzer: () => void,
   ) {
     super();
-    this.nativeCollector = nativeCollector;
+    this.nativeAnalyzer = nativeAnalyzer;
     this.resetAnalyzer = resetAnalyzer;
     this.closeAnalyzer = closeAnalyzer;
   }
@@ -120,7 +123,7 @@ export class Collector extends FrameProcessor<AudioFrame> {
   /** True while the collector has collected some audio the analyzer can act on. */
   get initialized(): boolean {
     return (
-      this.collectingEnabled && this.hasBufferedAudio && this.nativeCollector !== null
+      this.collectingEnabled && this.hasBufferedAudio && this.nativeAnalyzer !== null
     );
   }
 
@@ -139,8 +142,8 @@ export class Collector extends FrameProcessor<AudioFrame> {
   }
 
   process(frame: AudioFrame): AudioFrame {
-    const collector = this.nativeCollector;
-    if (!this.collectingEnabled || !collector) return frame;
+    const native = this.nativeAnalyzer;
+    if (!this.collectingEnabled || !native) return frame;
 
     try {
       const streamFormat: [number, number, number] = [
@@ -154,7 +157,7 @@ export class Collector extends FrameProcessor<AudioFrame> {
         this.streamFormat[1] !== streamFormat[1] ||
         this.streamFormat[2] !== streamFormat[2]
       ) {
-        collector.initialize(frame.sampleRate, frame.samplesPerChannel, false);
+        native.initialize(frame.sampleRate, frame.samplesPerChannel, false);
         this.streamFormat = streamFormat;
       }
 
@@ -178,7 +181,7 @@ export class Collector extends FrameProcessor<AudioFrame> {
           mono[sample] = sum / frame.channels;
         }
       }
-      collector.buffer(mono);
+      native.buffer(mono);
       this.hasBufferedAudio = true;
     } catch (error) {
       writeLog(
@@ -215,7 +218,7 @@ export class Collector extends FrameProcessor<AudioFrame> {
     this.streamFormat = null;
     this.streamInfo = null;
     this.hasBufferedAudio = false;
-    this.nativeCollector = null;
+    this.nativeAnalyzer = null;
   }
 
   close(): void {
@@ -229,7 +232,7 @@ export class Collector extends FrameProcessor<AudioFrame> {
 export class Analyzer extends (EventEmitter as new () => TypedEmitter<AnalyzerCallbacks>) {
   readonly collector: Collector;
 
-  private nativeAnalyzer: AnalyzerInstance | null;
+  private nativeAnalyzer: AicAnalyzer | null;
   private readonly timer: ReturnType<typeof setInterval>;
   private readonly modelId: string;
   private readonly enableMetrics: boolean;
@@ -245,21 +248,24 @@ export class Analyzer extends (EventEmitter as new () => TypedEmitter<AnalyzerCa
     }
 
     setSdkId(9);
-    let pair: ReturnType<typeof analyzerPair>;
+    let nativeAnalyzer: AicAnalyzer;
     try {
       this.modelId = options.model.getId();
-      pair = analyzerPair(options.model, resolveLicenseKey(options.licenseKey));
+      nativeAnalyzer = new AicAnalyzer(
+        options.model,
+        resolveLicenseKey(options.licenseKey),
+      );
     } catch (error) {
       throw new Error(`Failed to create ai-coustics Analyzer: ${errorDetail(error)}`, {
         cause: error,
       });
     }
 
-    this.nativeAnalyzer = pair.analyzer;
+    this.nativeAnalyzer = nativeAnalyzer;
     this.enableMetrics = options.enableMetrics ?? true;
     this.collector = new Collector(
-      pair.collector,
-      () => pair.analyzer.reset(),
+      nativeAnalyzer,
+      () => nativeAnalyzer.reset(),
       () => this.close(),
     );
     this.timer = setInterval(() => this.analyze(), analysisInterval * 1000);
@@ -272,7 +278,7 @@ export class Analyzer extends (EventEmitter as new () => TypedEmitter<AnalyzerCa
 
     const started = performance.now();
     try {
-      const nativeResult = analyzer.analyzeBuffered();
+      const nativeResult = analyzer.analyze();
       const elapsed = performance.now() - started;
       const result = Object.freeze({ ...nativeResult });
       this.sequence += 1;
@@ -355,6 +361,17 @@ export class Analyzer extends (EventEmitter as new () => TypedEmitter<AnalyzerCa
         "error",
         "analyzer",
         "session termination failed",
+        { modelName: this.modelId, errorMessage: errorDetail(error) },
+        error,
+      );
+    }
+    try {
+      analyzer.dispose();
+    } catch (error) {
+      writeLog(
+        "error",
+        "analyzer",
+        "native disposal failed",
         { modelName: this.modelId, errorMessage: errorDetail(error) },
         error,
       );
