@@ -10,15 +10,14 @@ import {
 import { writeLog } from "./log.js";
 import { pcm16ToFloat32 } from "./processor.js";
 import {
+  Analyzer as AicAnalyzer,
   type AnalysisResult,
-  type AnalyzerInstance,
-  type CollectorInstance,
   type Model,
-  analyzerPair,
   setSdkId,
 } from "./sdk.js";
 
 const DEFAULT_ANALYSIS_INTERVAL_SECONDS = 5;
+const OVERLAP_WARNING_INTERVAL_MS = 10_000;
 const meter = metrics.getMeter("ai-coustics-livekit-plugin");
 const analysisCount = meter.createCounter("ai_coustics.analyzer.analysis", {
   description: "Number of ai-coustics buffered audio analyses",
@@ -85,9 +84,14 @@ function errorDetail(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Transparent LiveKit frame processor that collects audio for an Analyzer. */
+/**
+ * Transparent LiveKit frame processor that collects audio for an Analyzer.
+ *
+ * Holds the same native analyzer as its owning {@link Analyzer} but only ever calls the
+ * buffering half of that API, which does not take the analyzer lock.
+ */
 export class Collector extends FrameProcessor<AudioFrame> {
-  private nativeCollector: CollectorInstance | null;
+  private nativeAnalyzer: AicAnalyzer | null;
   private readonly resetAnalyzer: () => void;
   private readonly closeAnalyzer: () => void;
   private streamFormat: [number, number, number] | null = null;
@@ -97,12 +101,12 @@ export class Collector extends FrameProcessor<AudioFrame> {
   private closed = false;
 
   constructor(
-    nativeCollector: CollectorInstance,
+    nativeAnalyzer: AicAnalyzer,
     resetAnalyzer: () => void,
     closeAnalyzer: () => void,
   ) {
     super();
-    this.nativeCollector = nativeCollector;
+    this.nativeAnalyzer = nativeAnalyzer;
     this.resetAnalyzer = resetAnalyzer;
     this.closeAnalyzer = closeAnalyzer;
   }
@@ -120,7 +124,7 @@ export class Collector extends FrameProcessor<AudioFrame> {
   /** True while the collector has collected some audio the analyzer can act on. */
   get initialized(): boolean {
     return (
-      this.collectingEnabled && this.hasBufferedAudio && this.nativeCollector !== null
+      this.collectingEnabled && this.hasBufferedAudio && this.nativeAnalyzer !== null
     );
   }
 
@@ -139,8 +143,8 @@ export class Collector extends FrameProcessor<AudioFrame> {
   }
 
   process(frame: AudioFrame): AudioFrame {
-    const collector = this.nativeCollector;
-    if (!this.collectingEnabled || !collector) return frame;
+    const native = this.nativeAnalyzer;
+    if (!this.collectingEnabled || !native) return frame;
 
     try {
       const streamFormat: [number, number, number] = [
@@ -154,7 +158,7 @@ export class Collector extends FrameProcessor<AudioFrame> {
         this.streamFormat[1] !== streamFormat[1] ||
         this.streamFormat[2] !== streamFormat[2]
       ) {
-        collector.initialize(frame.sampleRate, frame.samplesPerChannel, false);
+        native.initialize(frame.sampleRate, frame.samplesPerChannel, false);
         this.streamFormat = streamFormat;
       }
 
@@ -178,7 +182,7 @@ export class Collector extends FrameProcessor<AudioFrame> {
           mono[sample] = sum / frame.channels;
         }
       }
-      collector.buffer(mono);
+      native.buffer(mono);
       this.hasBufferedAudio = true;
     } catch (error) {
       writeLog(
@@ -215,7 +219,7 @@ export class Collector extends FrameProcessor<AudioFrame> {
     this.streamFormat = null;
     this.streamInfo = null;
     this.hasBufferedAudio = false;
-    this.nativeCollector = null;
+    this.nativeAnalyzer = null;
   }
 
   close(): void {
@@ -229,10 +233,15 @@ export class Collector extends FrameProcessor<AudioFrame> {
 export class Analyzer extends (EventEmitter as new () => TypedEmitter<AnalyzerCallbacks>) {
   readonly collector: Collector;
 
-  private nativeAnalyzer: AnalyzerInstance | null;
+  private nativeAnalyzer: AicAnalyzer | null;
   private readonly timer: ReturnType<typeof setInterval>;
   private readonly modelId: string;
   private readonly enableMetrics: boolean;
+  private readonly analysisIntervalMs: number;
+  private analysisInFlight: Promise<void> | null = null;
+  private teardown: Promise<void> | null = null;
+  private skippedAnalyses = 0;
+  private lastOverlapWarning: number | null = null;
   private sequence = 0;
   private closed = false;
 
@@ -245,38 +254,76 @@ export class Analyzer extends (EventEmitter as new () => TypedEmitter<AnalyzerCa
     }
 
     setSdkId(9);
-    let pair: ReturnType<typeof analyzerPair>;
+    let nativeAnalyzer: AicAnalyzer;
     try {
       this.modelId = options.model.getId();
-      pair = analyzerPair(options.model, resolveLicenseKey(options.licenseKey));
+      nativeAnalyzer = new AicAnalyzer(
+        options.model,
+        resolveLicenseKey(options.licenseKey),
+      );
     } catch (error) {
       throw new Error(`Failed to create ai-coustics Analyzer: ${errorDetail(error)}`, {
         cause: error,
       });
     }
 
-    this.nativeAnalyzer = pair.analyzer;
+    this.nativeAnalyzer = nativeAnalyzer;
     this.enableMetrics = options.enableMetrics ?? true;
     this.collector = new Collector(
-      pair.collector,
-      () => pair.analyzer.reset(),
-      () => this.close(),
+      nativeAnalyzer,
+      // Stream changes are rare and off the audio path, so reset stays synchronous even
+      // though it waits for the analyzer lock when an analysis is in flight.
+      () => nativeAnalyzer.reset(),
+      () => void this.close(),
     );
-    this.timer = setInterval(() => this.analyze(), analysisInterval * 1000);
+    this.analysisIntervalMs = analysisInterval * 1000;
+    this.timer = setInterval(() => this.scheduleAnalysis(), this.analysisIntervalMs);
     this.timer.unref?.();
   }
 
-  private analyze(): void {
+  private scheduleAnalysis(): void {
     const analyzer = this.nativeAnalyzer;
-    if (!analyzer || !this.collector.initialized) return;
+    if (this.closed || !analyzer || !this.collector.initialized) return;
 
+    if (this.analysisInFlight) {
+      this.skippedAnalyses += 1;
+      const now = performance.now();
+      if (
+        this.lastOverlapWarning === null ||
+        now - this.lastOverlapWarning >= OVERLAP_WARNING_INTERVAL_MS
+      ) {
+        this.lastOverlapWarning = now;
+        writeLog("warn", "analyzer", "analysis falling behind its interval", {
+          modelName: this.modelId,
+          analysisIntervalMs: this.analysisIntervalMs,
+          skippedAnalyses: this.skippedAnalyses,
+          ...(this.collector.currentStreamInfo ?? {}),
+        });
+      }
+      return;
+    }
+
+    // Snapshot the stream now: a stream change resets the collector, so the audio about
+    // to be analyzed belongs to this stream, while `currentStreamInfo` may already have
+    // moved on by the time inference completes.
+    const streamInfo = this.collector.currentStreamInfo;
+    const tracked = this.analyze(analyzer, streamInfo).finally(() => {
+      if (this.analysisInFlight === tracked) this.analysisInFlight = null;
+    });
+    this.analysisInFlight = tracked;
+  }
+
+  /** Runs one analysis on a libuv worker thread. Never rejects; failures are logged. */
+  private async analyze(
+    analyzer: AicAnalyzer,
+    streamInfo: FrameProcessorStreamInfo | null,
+  ): Promise<void> {
     const started = performance.now();
     try {
-      const nativeResult = analyzer.analyzeBuffered();
+      const nativeResult = await analyzer.analyzeAsync();
       const elapsed = performance.now() - started;
       const result = Object.freeze({ ...nativeResult });
       this.sequence += 1;
-      const streamInfo = this.collector.currentStreamInfo;
       const event = Object.freeze({
         result,
         timestamp: Date.now(),
@@ -304,7 +351,7 @@ export class Analyzer extends (EventEmitter as new () => TypedEmitter<AnalyzerCa
         "error",
         "analyzer",
         "buffered audio analysis failed",
-        { modelName: this.modelId, ...(this.collector.currentStreamInfo ?? {}) },
+        { modelName: this.modelId, ...(streamInfo ?? {}) },
         error,
       );
     }
@@ -340,14 +387,27 @@ export class Analyzer extends (EventEmitter as new () => TypedEmitter<AnalyzerCa
     }
   }
 
-  close(): void {
-    if (this.closed) return;
+  /**
+   * Stops scheduled analysis and releases the SDK session.
+   *
+   * Resolves once any in-flight analysis has settled. Teardown waits for it because
+   * `terminateSession()` and `dispose()` block on the analyzer lock. Safe to call without
+   * awaiting, and repeated calls return the same promise.
+   */
+  close(): Promise<void> {
+    if (this.teardown) return this.teardown;
     this.closed = true;
     clearInterval(this.timer);
     this.collector.detach();
     const analyzer = this.nativeAnalyzer;
     this.nativeAnalyzer = null;
-    if (!analyzer) return;
+    this.teardown = (this.analysisInFlight ?? Promise.resolve()).then(() => {
+      if (analyzer) this.release(analyzer);
+    });
+    return this.teardown;
+  }
+
+  private release(analyzer: AicAnalyzer): void {
     try {
       analyzer.terminateSession();
     } catch (error) {
@@ -355,6 +415,17 @@ export class Analyzer extends (EventEmitter as new () => TypedEmitter<AnalyzerCa
         "error",
         "analyzer",
         "session termination failed",
+        { modelName: this.modelId, errorMessage: errorDetail(error) },
+        error,
+      );
+    }
+    try {
+      analyzer.dispose();
+    } catch (error) {
+      writeLog(
+        "error",
+        "analyzer",
+        "native disposal failed",
         { modelName: this.modelId, errorMessage: errorDetail(error) },
         error,
       );

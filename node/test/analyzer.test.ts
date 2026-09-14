@@ -31,9 +31,15 @@ const telemetry = vi.hoisted(() => {
 });
 
 const sdk = vi.hoisted(() => {
-  class FakeCollector {
+  class FakeAnalyzer {
     initializations: Array<[number, number, boolean]> = [];
     blocks: number[][] = [];
+    analyzeCalls = 0;
+    resetCalls = 0;
+    terminateCalls = 0;
+    disposeCalls = 0;
+    error: Error | null = null;
+    gate: Promise<void> | null = null;
 
     initialize(sampleRate: number, blockSize: number, variable: boolean): void {
       this.initializations.push([sampleRate, blockSize, variable]);
@@ -42,17 +48,25 @@ const sdk = vi.hoisted(() => {
     buffer(samples: Float32Array): void {
       this.blocks.push(Array.from(samples));
     }
-  }
 
-  class FakeAnalyzer {
-    analyzeCalls = 0;
-    resetCalls = 0;
-    terminateCalls = 0;
-    error: Error | null = null;
-
-    analyzeBuffered() {
+    analyze() {
       this.analyzeCalls += 1;
       if (this.error) throw this.error;
+      return {
+        riskScore: 0.1,
+        speakerReverb: 0.2,
+        speakerLoudness: 0.3,
+        interferingSpeech: 0.4,
+        noise: 0.5,
+        codecDegradation: 0.6,
+        packetLoss: 0.7,
+      };
+    }
+
+    async analyzeAsync() {
+      this.analyzeCalls += 1;
+      if (this.error) throw this.error;
+      if (this.gate) await this.gate;
       return {
         riskScore: 0.1,
         speakerReverb: 0.2,
@@ -72,13 +86,16 @@ const sdk = vi.hoisted(() => {
       this.terminateCalls += 1;
     }
 
+    dispose(): void {
+      this.disposeCalls += 1;
+    }
+
     updateBearerToken(): void {}
   }
 
-  const collectors: FakeCollector[] = [];
   const analyzers: FakeAnalyzer[] = [];
   const sdkIds: number[] = [];
-  return { FakeCollector, FakeAnalyzer, collectors, analyzers, sdkIds };
+  return { FakeAnalyzer, analyzers, sdkIds };
 });
 
 vi.mock("@ai-coustics/aic-sdk", () => ({
@@ -91,12 +108,12 @@ vi.mock("@ai-coustics/aic-sdk", () => ({
     Sensitivity: 3,
     MinimumSpeechDuration: 4,
   },
-  analyzerPair: () => {
-    const collector = new sdk.FakeCollector();
-    const analyzer = new sdk.FakeAnalyzer();
-    sdk.collectors.push(collector);
-    sdk.analyzers.push(analyzer);
-    return { collector, analyzer };
+  Analyzer: class {
+    constructor() {
+      const analyzer = new sdk.FakeAnalyzer();
+      sdk.analyzers.push(analyzer);
+      return analyzer;
+    }
   },
   _setSdkId: (id: number) => sdk.sdkIds.push(id),
 }));
@@ -141,7 +158,6 @@ describe("Analyzer", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     logging.calls.length = 0;
-    sdk.collectors.length = 0;
     sdk.analyzers.length = 0;
     sdk.sdkIds.length = 0;
     telemetry.measurements.analysis.length = 0;
@@ -151,7 +167,7 @@ describe("Analyzer", () => {
 
   afterEach(() => vi.useRealTimers());
 
-  it("exposes a transparent FrameProcessor collector that downmixes audio", () => {
+  it("exposes a transparent FrameProcessor collector that downmixes audio", async () => {
     const analyzer = new Analyzer({
       model: { getId: () => "analysis-test-model" } as never,
       licenseKey: "test-license",
@@ -164,8 +180,8 @@ describe("Analyzer", () => {
 
     const frame = makeFrame(2);
     expect(analyzer.collector.process(frame)).toBe(frame);
-    expect(sdk.collectors[0]!.initializations).toEqual([[16000, 4, false]]);
-    expect(sdk.collectors[0]!.blocks[0]).toEqual([
+    expect(sdk.analyzers[0]!.initializations).toEqual([[16000, 4, false]]);
+    expect(sdk.analyzers[0]!.blocks[0]).toEqual([
       32767 / 32768,
       -1,
       0.5,
@@ -174,11 +190,12 @@ describe("Analyzer", () => {
 
     analyzer.collector.onStreamInfoCleared();
     expect(sdk.analyzers[0]!.resetCalls).toBe(1);
-    analyzer.close();
+    await analyzer.close();
     expect(sdk.analyzers[0]!.terminateCalls).toBe(1);
+    expect(sdk.analyzers[0]!.disposeCalls).toBe(1);
   });
 
-  it("analyzes on the configured interval and emits without logging the result", () => {
+  it("analyzes on the configured interval and emits without logging the result", async () => {
     const analyzer = new Analyzer({
       model: { getId: () => "analysis-test-model" } as never,
       licenseKey: "test-license",
@@ -193,7 +210,7 @@ describe("Analyzer", () => {
     });
     analyzer.collector.process(makeFrame());
 
-    vi.advanceTimersByTime(10);
+    await vi.advanceTimersByTimeAsync(10);
 
     expect(sdk.analyzers[0]!.analyzeCalls).toBe(1);
     expect(logging.calls).toEqual([]);
@@ -220,10 +237,10 @@ describe("Analyzer", () => {
       value: 0.1,
       attributes: { model_provider: "ai-coustics", "score.name": "risk_score" },
     });
-    analyzer.close();
+    await analyzer.close();
   });
 
-  it("pauses analysis while the collector is disabled", () => {
+  it("pauses analysis while the collector is disabled", async () => {
     const analyzer = new Analyzer({
       model: { getId: () => "analysis-test-model" } as never,
       licenseKey: "test-license",
@@ -233,33 +250,33 @@ describe("Analyzer", () => {
     analyzer.on("analysisResult", (event) => events.push(event));
     analyzer.collector.process(makeFrame());
 
-    vi.advanceTimersByTime(10);
+    await vi.advanceTimersByTimeAsync(10);
     expect(sdk.analyzers[0]!.analyzeCalls).toBe(1);
 
     analyzer.collector.setEnabled(false);
     const frame = makeFrame();
     expect(analyzer.collector.process(frame)).toBe(frame);
-    vi.advanceTimersByTime(50);
+    await vi.advanceTimersByTimeAsync(50);
 
-    expect(sdk.collectors[0]!.blocks).toHaveLength(1);
+    expect(sdk.analyzers[0]!.blocks).toHaveLength(1);
     expect(sdk.analyzers[0]!.analyzeCalls).toBe(1);
     expect(events).toHaveLength(1);
 
     // Re-enabling drops the stale buffer and waits for fresh audio.
     analyzer.collector.setEnabled(true);
     expect(sdk.analyzers[0]!.resetCalls).toBe(1);
-    vi.advanceTimersByTime(50);
+    await vi.advanceTimersByTimeAsync(50);
     expect(sdk.analyzers[0]!.analyzeCalls).toBe(1);
 
     analyzer.collector.process(makeFrame());
-    vi.advanceTimersByTime(10);
+    await vi.advanceTimersByTimeAsync(10);
     expect(sdk.analyzers[0]!.analyzeCalls).toBe(2);
     expect(events).toHaveLength(2);
 
-    analyzer.close();
+    await analyzer.close();
   });
 
-  it("stops the analyzer when RoomIO closes its collector", () => {
+  it("stops the analyzer when RoomIO closes its collector", async () => {
     const analyzer = new Analyzer({
       model: { getId: () => "analysis-test-model" } as never,
       licenseKey: "test-license",
@@ -267,14 +284,14 @@ describe("Analyzer", () => {
     });
 
     analyzer.collector.close();
-    vi.advanceTimersByTime(1000);
+    await vi.advanceTimersByTimeAsync(1000);
 
     expect(analyzer.collector.isEnabled()).toBe(false);
     expect(sdk.analyzers[0]!.terminateCalls).toBe(1);
     expect(sdk.analyzers[0]!.analyzeCalls).toBe(0);
   });
 
-  it("records failed analyses without score measurements", () => {
+  it("records failed analyses without score measurements", async () => {
     const analyzer = new Analyzer({
       model: { getId: () => "analysis-test-model" } as never,
       licenseKey: "test-license",
@@ -283,7 +300,7 @@ describe("Analyzer", () => {
     sdk.analyzers[0]!.error = new Error("analysis failed");
     analyzer.collector.process(makeFrame());
 
-    vi.advanceTimersByTime(10);
+    await vi.advanceTimersByTimeAsync(10);
 
     expect(telemetry.measurements.analysis).toEqual([
       {
@@ -304,22 +321,128 @@ describe("Analyzer", () => {
         }),
       }),
     );
-    analyzer.close();
+    await analyzer.close();
   });
 
-  it("defaults to analyzing every five seconds", () => {
+  it("defaults to analyzing every five seconds", async () => {
     const analyzer = new Analyzer({
       model: { getId: () => "analysis-test-model" } as never,
       licenseKey: "test-license",
     });
     analyzer.collector.process(makeFrame());
 
-    vi.advanceTimersByTime(4999);
+    await vi.advanceTimersByTimeAsync(4999);
     expect(sdk.analyzers[0]!.analyzeCalls).toBe(0);
-    vi.advanceTimersByTime(1);
+    await vi.advanceTimersByTimeAsync(1);
     expect(sdk.analyzers[0]!.analyzeCalls).toBe(1);
 
-    analyzer.close();
+    await analyzer.close();
+  });
+
+  it("skips ticks while the previous analysis is still running", async () => {
+    const analyzer = new Analyzer({
+      model: { getId: () => "analysis-test-model" } as never,
+      licenseKey: "test-license",
+      analysisInterval: 0.01,
+    });
+    let release!: () => void;
+    sdk.analyzers[0]!.gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    analyzer.collector.process(makeFrame());
+
+    await vi.advanceTimersByTimeAsync(30);
+    expect(sdk.analyzers[0]!.analyzeCalls).toBe(1);
+    expect(logging.calls).toContainEqual(
+      expect.objectContaining({
+        level: "warn",
+        message: "Analyzer: analysis falling behind its interval",
+        fields: expect.objectContaining({
+          plugin: "ai-coustics",
+          component: "analyzer",
+          modelName: "analysis-test-model",
+          analysisIntervalMs: 10,
+        }),
+      }),
+    );
+
+    // Buffering does not take the analyzer lock, so audio keeps flowing meanwhile.
+    const frame = makeFrame();
+    expect(analyzer.collector.process(frame)).toBe(frame);
+    expect(sdk.analyzers[0]!.blocks).toHaveLength(2);
+
+    release();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(sdk.analyzers[0]!.analyzeCalls).toBe(2);
+    await analyzer.close();
+  });
+
+  it("labels a result with the stream it was collected for", async () => {
+    const analyzer = new Analyzer({
+      model: { getId: () => "analysis-test-model" } as never,
+      licenseKey: "test-license",
+      analysisInterval: 0.01,
+    });
+    const events: AnalysisEvent[] = [];
+    analyzer.on("analysisResult", (event) => events.push(event));
+    let release!: () => void;
+    sdk.analyzers[0]!.gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    analyzer.collector.onStreamInfoUpdated({
+      roomName: "room-a",
+      participantIdentity: "speaker-a",
+      publicationSid: "TR_a",
+    });
+    analyzer.collector.process(makeFrame());
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(sdk.analyzers[0]!.analyzeCalls).toBe(1);
+
+    // The stream switches while the analysis is still in flight.
+    analyzer.collector.onStreamInfoUpdated({
+      roomName: "room-b",
+      participantIdentity: "speaker-b",
+      publicationSid: "TR_b",
+    });
+    release();
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual(
+      expect.objectContaining({
+        roomName: "room-a",
+        participantIdentity: "speaker-a",
+        publicationSid: "TR_a",
+      }),
+    );
+    await analyzer.close();
+  });
+
+  it("releases the native analyzer only once in-flight analysis settles", async () => {
+    const analyzer = new Analyzer({
+      model: { getId: () => "analysis-test-model" } as never,
+      licenseKey: "test-license",
+      analysisInterval: 0.01,
+    });
+    let release!: () => void;
+    sdk.analyzers[0]!.gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    analyzer.collector.process(makeFrame());
+    await vi.advanceTimersByTimeAsync(10);
+    expect(sdk.analyzers[0]!.analyzeCalls).toBe(1);
+
+    const closed = analyzer.close();
+    await Promise.resolve();
+    expect(sdk.analyzers[0]!.terminateCalls).toBe(0);
+    expect(sdk.analyzers[0]!.disposeCalls).toBe(0);
+
+    release();
+    await closed;
+    expect(sdk.analyzers[0]!.terminateCalls).toBe(1);
+    expect(sdk.analyzers[0]!.disposeCalls).toBe(1);
+    expect(analyzer.close()).toBe(closed);
   });
 
   it.each([0, -1, Number.POSITIVE_INFINITY, Number.NaN])(

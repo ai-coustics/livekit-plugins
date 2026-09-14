@@ -71,9 +71,9 @@ Download models during deployment or container setup:
 ```ts
 import { Model } from "@ai-coustics/livekit-plugin";
 
-const enhancementPath = Model.download("quail-vf-2.2-l-16khz", "./models");
-const vadPath = Model.download("vad-2.1-xxs-16khz", "./models");
-const analysisPath = Model.download("tyto-1.1-l-16khz", "./models");
+const enhancementPath = await Model.download("quail-vf-2.2-l-16khz", "./models");
+const vadPath = await Model.download("vad-2.1-xxs-16khz", "./models");
+const analysisPath = await Model.download("tyto-1.1-l-16khz", "./models");
 ```
 
 Enhancement and VAD models are different model types. Make the returned paths available to your
@@ -169,6 +169,10 @@ rest of the pipeline.
 
 This still uses LiveKit's `noiseCancellation` slot as a temporary integration. RoomIO owns the
 chain and closes the processor, collector, and analyzer together.
+
+Analysis inference runs on a worker thread, so it never blocks the agent's event loop. If you own
+an `Analyzer` outside RoomIO, `analyzer.close()` returns a promise that resolves once any in-flight
+analysis has settled and the SDK session is released; awaiting it is optional.
 
 ## Configuration
 
