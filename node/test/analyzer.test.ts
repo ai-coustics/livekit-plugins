@@ -377,6 +377,48 @@ describe("Analyzer", () => {
     await analyzer.close();
   });
 
+  it("labels a result with the stream it was collected for", async () => {
+    const analyzer = new Analyzer({
+      model: { getId: () => "analysis-test-model" } as never,
+      licenseKey: "test-license",
+      analysisInterval: 0.01,
+    });
+    const events: AnalysisEvent[] = [];
+    analyzer.on("analysisResult", (event) => events.push(event));
+    let release!: () => void;
+    sdk.analyzers[0]!.gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    analyzer.collector.onStreamInfoUpdated({
+      roomName: "room-a",
+      participantIdentity: "speaker-a",
+      publicationSid: "TR_a",
+    });
+    analyzer.collector.process(makeFrame());
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(sdk.analyzers[0]!.analyzeCalls).toBe(1);
+
+    // The stream switches while the analysis is still in flight.
+    analyzer.collector.onStreamInfoUpdated({
+      roomName: "room-b",
+      participantIdentity: "speaker-b",
+      publicationSid: "TR_b",
+    });
+    release();
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual(
+      expect.objectContaining({
+        roomName: "room-a",
+        participantIdentity: "speaker-a",
+        publicationSid: "TR_a",
+      }),
+    );
+    await analyzer.close();
+  });
+
   it("releases the native analyzer only once in-flight analysis settles", async () => {
     const analyzer = new Analyzer({
       model: { getId: () => "analysis-test-model" } as never,

@@ -303,21 +303,27 @@ export class Analyzer extends (EventEmitter as new () => TypedEmitter<AnalyzerCa
       return;
     }
 
-    const tracked = this.analyze(analyzer).finally(() => {
+    // Snapshot the stream now: a stream change resets the collector, so the audio about
+    // to be analyzed belongs to this stream, while `currentStreamInfo` may already have
+    // moved on by the time inference completes.
+    const streamInfo = this.collector.currentStreamInfo;
+    const tracked = this.analyze(analyzer, streamInfo).finally(() => {
       if (this.analysisInFlight === tracked) this.analysisInFlight = null;
     });
     this.analysisInFlight = tracked;
   }
 
   /** Runs one analysis on a libuv worker thread. Never rejects; failures are logged. */
-  private async analyze(analyzer: AicAnalyzer): Promise<void> {
+  private async analyze(
+    analyzer: AicAnalyzer,
+    streamInfo: FrameProcessorStreamInfo | null,
+  ): Promise<void> {
     const started = performance.now();
     try {
       const nativeResult = await analyzer.analyzeAsync();
       const elapsed = performance.now() - started;
       const result = Object.freeze({ ...nativeResult });
       this.sequence += 1;
-      const streamInfo = this.collector.currentStreamInfo;
       const event = Object.freeze({
         result,
         timestamp: Date.now(),
@@ -345,7 +351,7 @@ export class Analyzer extends (EventEmitter as new () => TypedEmitter<AnalyzerCa
         "error",
         "analyzer",
         "buffered audio analysis failed",
-        { modelName: this.modelId, ...(this.collector.currentStreamInfo ?? {}) },
+        { modelName: this.modelId, ...(streamInfo ?? {}) },
         error,
       );
     }

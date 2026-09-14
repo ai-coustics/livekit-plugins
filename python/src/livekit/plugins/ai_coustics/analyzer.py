@@ -254,7 +254,9 @@ class Analyzer(rtc.EventEmitter[Literal["analysis_result"]]):
                 extra=log_fields("analyzer", model_name=self._model_id),
             )
 
-    async def _analyze_once(self, native_analyzer: aic_sdk.Analyzer) -> None:
+    async def _analyze_once(
+        self, native_analyzer: aic_sdk.Analyzer, stream_info: dict[str, str]
+    ) -> None:
         started = time.perf_counter()
         try:
             result = await asyncio.to_thread(native_analyzer.analyze_buffered)
@@ -265,7 +267,6 @@ class Analyzer(rtc.EventEmitter[Literal["analysis_result"]]):
 
         inference_duration = time.perf_counter() - started
         self._sequence += 1
-        stream_info = self.collector.stream_info
         event = AnalysisEvent(
             result=result,
             timestamp=time.time(),
@@ -336,15 +337,19 @@ class Analyzer(rtc.EventEmitter[Literal["analysis_result"]]):
                     pass
                 if not self.collector.initialized:
                     continue
+                # Snapshot the stream now: a stream change resets the collector, so the
+                # audio about to be analyzed belongs to this stream, while `stream_info`
+                # may already have moved on by the time inference completes.
+                stream_info = self.collector.stream_info
                 try:
-                    await self._analyze_once(native_analyzer)
+                    await self._analyze_once(native_analyzer, stream_info)
                 except Exception:
                     logger.exception(
                         "Analyzer: buffered audio analysis failed",
                         extra=log_fields(
                             "analyzer",
                             model_name=self._model_id,
-                            **self.collector.stream_info,
+                            **stream_info,
                         ),
                     )
         finally:
