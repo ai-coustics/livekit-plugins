@@ -8,9 +8,11 @@ import {
  * Single import boundary for the ai-coustics SDK.
  *
  * aic-sdk ships its own TypeScript declarations, so the classes and result types are
- * re-exported unchanged. `ProcessorParameter` and `VadParameter` are `const enum`s and
- * therefore exist at compile time only; each is mirrored as a plain object so the plugin
- * can re-export it as part of its public runtime API.
+ * re-exported unchanged. `ProcessorParameter` and `VadParameter` are declared as
+ * `const enum`s, which TypeScript treats as compile-time-only even though napi-rs does
+ * emit runtime objects for them. Each is therefore mirrored as a plain object the plugin
+ * owns, so it can be re-exported as part of the public runtime API without depending on
+ * declarations a bundler is free to erase.
  */
 export {
   Analyzer,

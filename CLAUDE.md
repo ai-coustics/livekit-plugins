@@ -91,8 +91,9 @@ Four public objects, each mirrored across both runtimes:
 
 `ProcessorContext` wraps the SDK context purely to add structured logging around parameter and
 bearer-token changes. Node's `sdk.ts` is a thin re-export boundary over the declarations aic-sdk
-0.24 ships; it only hand-mirrors `ProcessorParameter` and `VadParameter`, which are `const enum`s
-and so have no runtime form of their own.
+0.24 ships; it only hand-mirrors `ProcessorParameter` and `VadParameter`, which are declared as
+`const enum`s that TypeScript treats as compile-time-only, so the plugin owns the runtime objects
+it re-exports rather than leaning on declarations a bundler may erase.
 
 In Node, `close()` on all three components terminates the SDK session and then calls the SDK's
 `dispose()`; disposal is idempotent and any later call on a disposed instance throws, so close
