@@ -223,6 +223,42 @@ describe("Analyzer", () => {
     analyzer.close();
   });
 
+  it("pauses analysis while the collector is disabled", () => {
+    const analyzer = new Analyzer({
+      model: { getId: () => "analysis-test-model" } as never,
+      licenseKey: "test-license",
+      analysisInterval: 0.01,
+    });
+    const events: AnalysisEvent[] = [];
+    analyzer.on("analysisResult", (event) => events.push(event));
+    analyzer.collector.process(makeFrame());
+
+    vi.advanceTimersByTime(10);
+    expect(sdk.analyzers[0]!.analyzeCalls).toBe(1);
+
+    analyzer.collector.setEnabled(false);
+    const frame = makeFrame();
+    expect(analyzer.collector.process(frame)).toBe(frame);
+    vi.advanceTimersByTime(50);
+
+    expect(sdk.collectors[0]!.blocks).toHaveLength(1);
+    expect(sdk.analyzers[0]!.analyzeCalls).toBe(1);
+    expect(events).toHaveLength(1);
+
+    // Re-enabling drops the stale buffer and waits for fresh audio.
+    analyzer.collector.setEnabled(true);
+    expect(sdk.analyzers[0]!.resetCalls).toBe(1);
+    vi.advanceTimersByTime(50);
+    expect(sdk.analyzers[0]!.analyzeCalls).toBe(1);
+
+    analyzer.collector.process(makeFrame());
+    vi.advanceTimersByTime(10);
+    expect(sdk.analyzers[0]!.analyzeCalls).toBe(2);
+    expect(events).toHaveLength(2);
+
+    analyzer.close();
+  });
+
   it("stops the analyzer when RoomIO closes its collector", () => {
     const analyzer = new Analyzer({
       model: { getId: () => "analysis-test-model" } as never,

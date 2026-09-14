@@ -117,8 +117,11 @@ export class Collector extends FrameProcessor<AudioFrame> {
     this.collectingEnabled = enabled;
   }
 
+  /** True while the collector has collected some audio the analyzer can act on. */
   get initialized(): boolean {
-    return this.hasBufferedAudio && this.nativeCollector !== null;
+    return (
+      this.collectingEnabled && this.hasBufferedAudio && this.nativeCollector !== null
+    );
   }
 
   get currentStreamInfo(): FrameProcessorStreamInfo | null {

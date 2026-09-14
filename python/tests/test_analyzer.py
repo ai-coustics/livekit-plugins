@@ -268,6 +268,56 @@ async def test_records_failed_analysis_metrics(
 
 
 @pytest.mark.asyncio
+async def test_disabled_collector_pauses_analysis(
+    fake_sdk: tuple[FakeCollector, FakeNativeAnalyzer, list[int]],
+) -> None:
+    native_collector, native_analyzer, _ = fake_sdk
+    analyzer = Analyzer(
+        model=cast(aic_sdk.Model, FakeModel()),
+        license_key="test-license",
+        analysis_interval=0.01,
+    )
+    events: list[AnalysisEvent] = []
+    analyzer.on("analysis_result", events.append)
+    analyzer.collector._process(make_frame())
+
+    for _ in range(20):
+        if native_analyzer.analyze_calls:
+            break
+        await asyncio.sleep(0.005)
+    assert native_analyzer.analyze_calls >= 1
+
+    analyzer.collector.enabled = False
+    frame = make_frame()
+    assert analyzer.collector._process(frame) is frame
+    assert len(native_collector.blocks) == 1
+
+    # Let an analysis that was already in flight drain, then confirm no new ones start.
+    await asyncio.sleep(0.03)
+    calls_while_disabled = native_analyzer.analyze_calls
+    events_while_disabled = len(events)
+    await asyncio.sleep(0.06)
+    assert native_analyzer.analyze_calls == calls_while_disabled
+    assert len(events) == events_while_disabled
+
+    # Re-enabling drops the stale buffer and waits for fresh audio.
+    analyzer.collector.enabled = True
+    assert native_analyzer.reset_calls == 1
+    await asyncio.sleep(0.06)
+    assert native_analyzer.analyze_calls == calls_while_disabled
+
+    analyzer.collector._process(make_frame())
+    for _ in range(20):
+        if native_analyzer.analyze_calls > calls_while_disabled:
+            break
+        await asyncio.sleep(0.005)
+
+    await asyncio.wait_for(analyzer.aclose(), timeout=1.0)
+    assert native_analyzer.analyze_calls > calls_while_disabled
+    assert len(events) > events_while_disabled
+
+
+@pytest.mark.asyncio
 async def test_room_closing_collector_stops_analyzer(
     fake_sdk: tuple[FakeCollector, FakeNativeAnalyzer, list[int]],
 ) -> None:
