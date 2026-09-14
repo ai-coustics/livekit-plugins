@@ -16,7 +16,7 @@ process a throwaway frame to probe the license.
 
 Processor format initialization is lazy because LiveKit supplies the complete stream geometry
 with the first frame. Each LiveKit frame is processed in one fixed-size SDK call, avoiding the
-additional latency of the SDK's variable-block-size mode. aic-sdk 3.1 for Python and 0.23 for Node
+additional latency of the SDK's variable-block-size mode. aic-sdk 3.2 for Python and 0.23 for Node
 process mono audio only, so multichannel LiveKit frames are downmixed before processing and the
 enhanced signal is duplicated across the original channel count. This preserves the LiveKit frame
 geometry and metadata.

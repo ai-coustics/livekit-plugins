@@ -7,11 +7,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Two independently built packages that are functional mirrors of each other:
 
 - `python/` — `ai-coustics-livekit-plugin`, importable as `livekit.plugins.ai_coustics` (namespace
-  package under `python/src/livekit/plugins/ai_coustics/`), built on `aic-sdk` 3.1.
+  package under `python/src/livekit/plugins/ai_coustics/`), built on `aic-sdk` 3.2.
 - `node/` — `@ai-coustics/livekit-plugin` (`node/src/`), built on `@ai-coustics/aic-sdk` 0.23.
 
 Run all commands from inside `python/` or `node/`; there is no root-level build. The two packages
-are released in lockstep and must always carry the same version.
+are released in lockstep and must always carry the same version. Their SDK pins must also resolve
+to the same ai-coustics native core, which the bindings report through `get_sdk_version()` /
+`getVersion()` rather than through their own package version: `aic-sdk` 3.2 for Python wraps core
+0.24, while Node is still on core 0.23.
 
 `DEVELOPMENT.md` is the authoritative long-form document for architecture rationale, the logging
 convention, the local end-to-end environment, release steps, and the planned upstream LiveKit
