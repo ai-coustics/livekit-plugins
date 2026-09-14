@@ -170,6 +170,10 @@ rest of the pipeline.
 This still uses LiveKit's `noiseCancellation` slot as a temporary integration. RoomIO owns the
 chain and closes the processor, collector, and analyzer together.
 
+Analysis inference runs on a worker thread, so it never blocks the agent's event loop. If you own
+an `Analyzer` outside RoomIO, `analyzer.close()` returns a promise that resolves once any in-flight
+analysis has settled and the SDK session is released; awaiting it is optional.
+
 ## Configuration
 
 Set the enhancement level through the Processor context, and configure all SDK VAD parameters on

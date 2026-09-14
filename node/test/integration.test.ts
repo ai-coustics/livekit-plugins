@@ -257,7 +257,7 @@ describeIf("native Analyzer integration", () => {
         true,
       );
     } finally {
-      analyzer.close();
+      await analyzer.close();
     }
   }, 120_000);
 });

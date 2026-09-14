@@ -17,6 +17,7 @@ import {
 } from "./sdk.js";
 
 const DEFAULT_ANALYSIS_INTERVAL_SECONDS = 5;
+const OVERLAP_WARNING_INTERVAL_MS = 10_000;
 const meter = metrics.getMeter("ai-coustics-livekit-plugin");
 const analysisCount = meter.createCounter("ai_coustics.analyzer.analysis", {
   description: "Number of ai-coustics buffered audio analyses",
@@ -236,6 +237,11 @@ export class Analyzer extends (EventEmitter as new () => TypedEmitter<AnalyzerCa
   private readonly timer: ReturnType<typeof setInterval>;
   private readonly modelId: string;
   private readonly enableMetrics: boolean;
+  private readonly analysisIntervalMs: number;
+  private analysisInFlight: Promise<void> | null = null;
+  private teardown: Promise<void> | null = null;
+  private skippedAnalyses = 0;
+  private lastOverlapWarning: number | null = null;
   private sequence = 0;
   private closed = false;
 
@@ -265,20 +271,49 @@ export class Analyzer extends (EventEmitter as new () => TypedEmitter<AnalyzerCa
     this.enableMetrics = options.enableMetrics ?? true;
     this.collector = new Collector(
       nativeAnalyzer,
+      // Stream changes are rare and off the audio path, so reset stays synchronous even
+      // though it waits for the analyzer lock when an analysis is in flight.
       () => nativeAnalyzer.reset(),
-      () => this.close(),
+      () => void this.close(),
     );
-    this.timer = setInterval(() => this.analyze(), analysisInterval * 1000);
+    this.analysisIntervalMs = analysisInterval * 1000;
+    this.timer = setInterval(() => this.scheduleAnalysis(), this.analysisIntervalMs);
     this.timer.unref?.();
   }
 
-  private analyze(): void {
+  private scheduleAnalysis(): void {
     const analyzer = this.nativeAnalyzer;
-    if (!analyzer || !this.collector.initialized) return;
+    if (this.closed || !analyzer || !this.collector.initialized) return;
 
+    if (this.analysisInFlight) {
+      this.skippedAnalyses += 1;
+      const now = performance.now();
+      if (
+        this.lastOverlapWarning === null ||
+        now - this.lastOverlapWarning >= OVERLAP_WARNING_INTERVAL_MS
+      ) {
+        this.lastOverlapWarning = now;
+        writeLog("warn", "analyzer", "analysis falling behind its interval", {
+          modelName: this.modelId,
+          analysisIntervalMs: this.analysisIntervalMs,
+          skippedAnalyses: this.skippedAnalyses,
+          ...(this.collector.currentStreamInfo ?? {}),
+        });
+      }
+      return;
+    }
+
+    const tracked = this.analyze(analyzer).finally(() => {
+      if (this.analysisInFlight === tracked) this.analysisInFlight = null;
+    });
+    this.analysisInFlight = tracked;
+  }
+
+  /** Runs one analysis on a libuv worker thread. Never rejects; failures are logged. */
+  private async analyze(analyzer: AicAnalyzer): Promise<void> {
     const started = performance.now();
     try {
-      const nativeResult = analyzer.analyze();
+      const nativeResult = await analyzer.analyzeAsync();
       const elapsed = performance.now() - started;
       const result = Object.freeze({ ...nativeResult });
       this.sequence += 1;
@@ -346,14 +381,27 @@ export class Analyzer extends (EventEmitter as new () => TypedEmitter<AnalyzerCa
     }
   }
 
-  close(): void {
-    if (this.closed) return;
+  /**
+   * Stops scheduled analysis and releases the SDK session.
+   *
+   * Resolves once any in-flight analysis has settled. Teardown waits for it because
+   * `terminateSession()` and `dispose()` block on the analyzer lock. Safe to call without
+   * awaiting, and repeated calls return the same promise.
+   */
+  close(): Promise<void> {
+    if (this.teardown) return this.teardown;
     this.closed = true;
     clearInterval(this.timer);
     this.collector.detach();
     const analyzer = this.nativeAnalyzer;
     this.nativeAnalyzer = null;
-    if (!analyzer) return;
+    this.teardown = (this.analysisInFlight ?? Promise.resolve()).then(() => {
+      if (analyzer) this.release(analyzer);
+    });
+    return this.teardown;
+  }
+
+  private release(analyzer: AicAnalyzer): void {
     try {
       analyzer.terminateSession();
     } catch (error) {

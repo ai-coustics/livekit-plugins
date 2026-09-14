@@ -61,8 +61,11 @@ is recommended: analyzing original input audio helps explain how its quality aff
 the pipeline.
 
 Python schedules inference with an asyncio task and runs each blocking `analyze_buffered()` call
-through `asyncio.to_thread()`. Shutdown waits for an active inference before terminating the SDK
-session. Node uses a timer around the SDK's synchronous `analyzeBuffered()` API. Both runtimes emit
+through `asyncio.to_thread()`. Node uses a timer around `analyzeAsync()`, which the SDK runs on a
+libuv worker thread; a tick that arrives while an analysis is still running is skipped rather than
+queued, and the skip is reported through a rate-limited warning. In both runtimes shutdown waits
+for an active inference before terminating the SDK session, because termination and disposal wait
+for the analyzer lock. Both runtimes emit
 a plugin-level result event after every successful scheduled call without logging the result by
 default. They also record aggregate score, inference-duration, and success/error count instruments
 through the process-wide OpenTelemetry metrics API; operational errors remain logged and fail-open
@@ -117,10 +120,11 @@ such as package metadata or an explicit package list. Until those pieces exist, 
 
 ### First-class streaming Analyzer integration
 
-The aic-sdk streaming analysis API is split into a `Collector` and an `Analyzer`. The collector
-accepts mono float32 audio synchronously and is safe to feed from the audio path, while
-`analyze_buffered()` / `analyzeBuffered()` runs an expensive model inference and must execute away
-from that path. The result contains risk, speaker reverb, speaker loudness, interfering speech,
+The aic-sdk streaming analysis API separates buffering from inference: Python splits it across a
+`Collector` and an `Analyzer`, Node carries both on one `Analyzer`. Buffering accepts mono float32
+audio synchronously, does not take the analyzer lock, and is safe to feed from the audio path,
+while `analyze_buffered()` / `analyzeAsync()` runs an expensive model inference and must execute
+away from that path. The result contains risk, speaker reverb, speaker loudness, interfering speech,
 noise, codec-degradation, and packet-loss scores. `FileAnalyzer` is intended for complete in-memory
 signals and is not appropriate for a live agent stream.
 
@@ -203,10 +207,10 @@ so `window_duration` must remain optional until aic-sdk provides it. If future a
 different context windows, that API will also avoid hard-coding the current five-second window.
 
 Python runs `analyze_buffered()` through `asyncio.to_thread()` because the binding releases the
-GIL during inference. Node aic-sdk 0.23 exposes only synchronous `analyzeBuffered()` and
-`terminateSession()`, so calling them from a timer would still block the agent's JavaScript event
-loop. A production Node integration first needs native asynchronous APIs such as
-`analyzeBufferedAsync()` and `terminateSessionAsync()` that execute on a worker pool.
+GIL during inference. Node uses the SDK's own `analyzeAsync()`, added in aic-sdk 0.24, which runs
+on a libuv worker thread. `terminateSession()` and `dispose()` remain synchronous and wait for the
+analyzer lock, so the Node `Analyzer.close()` returns a promise and releases the native instance
+only after any in-flight analysis has settled.
 
 ### First-class Processor metrics
 

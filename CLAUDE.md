@@ -79,9 +79,12 @@ Four public objects, each mirrored across both runtimes:
   LiveKit's streaming turn detector); explicit `VADParameters` still win.
 - **`Analyzer` / `Collector`** (`analyzer.py` / `analyzer.ts`) — the public `collector` is a
   transparent `FrameProcessor` that buffers mono float32; the analyzer runs periodic
-  `analyze_buffered()`/`analyzeBuffered()` inference off the audio path and emits
+  `analyze_buffered()`/`analyzeAsync()` inference off the audio path and emits
   `analysis_result` / `analysisResult` events plus aggregate OpenTelemetry instruments. Python uses
-  an asyncio task + `asyncio.to_thread()`; Node uses a timer around the synchronous SDK call.
+  an asyncio task + `asyncio.to_thread()`; Node uses a timer around the SDK's own `analyzeAsync()`,
+  which runs on a libuv worker thread. Both skip a tick whose predecessor is still running, and
+  both defer session teardown until in-flight inference settles — Node's `Analyzer.close()`
+  therefore returns a promise.
 - **`FrameProcessorChain`** (`frame_processor_chain.py` / `.ts`) — lets these share RoomIO's single
   `noise_cancellation` slot. Order matters: `vad.processor` first, then `analyzer.collector`, then
   the enhancement `Processor`, so VAD and analysis see original input audio.
