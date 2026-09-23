@@ -3,10 +3,24 @@
 Audio enhancement, voice activity detection, and audio-quality analysis for LiveKit Agents, backed by the public
 `@ai-coustics/aic-sdk` package.
 
-> This package replaces `@livekit/plugins-ai-coustics`. Uninstall the official package before
-> migrating, and do not mix objects from the two implementations.
+> [!IMPORTANT]
+> The official
+> [`@livekit/plugins-ai-coustics`](https://www.npmjs.com/package/@livekit/plugins-ai-coustics)
+> package is the recommended integration path for most applications. It supports LiveKit Cloud,
+> integrates more deeply with the LiveKit ecosystem and tooling, and offers stronger stability
+> guarantees. Avoiding breaking changes is an explicit goal of the official plugin.
+>
+> This ai-coustics-maintained package follows a faster release cadence and is designed for teams
+> that want early access to the latest ai-coustics models and product features. Some of those
+> capabilities may be experimental and subject to change, and use of this package is billed
+> separately through ai-coustics. Choose it when early adoption of new ai-coustics capabilities is
+> important for your application.
 
 ## Installation
+
+> This package is an alternative to `@livekit/plugins-ai-coustics`, not an extension of it. If you
+> choose to migrate, uninstall the official package and do not mix objects from the two
+> implementations.
 
 ```bash
 npm uninstall @livekit/plugins-ai-coustics
@@ -57,9 +71,9 @@ Download models during deployment or container setup:
 ```ts
 import { Model } from "@ai-coustics/livekit-plugin";
 
-const enhancementPath = Model.download("quail-vf-2.2-l-16khz", "./models");
-const vadPath = Model.download("vad-2.1-xxs-16khz", "./models");
-const analysisPath = Model.download("tyto-1.1-l-16khz", "./models");
+const enhancementPath = await Model.download("quail-vf-2.2-l-16khz", "./models");
+const vadPath = await Model.download("vad-2.1-xxs-16khz", "./models");
+const analysisPath = await Model.download("tyto-1.1-l-16khz", "./models");
 ```
 
 Enhancement and VAD models are different model types. Make the returned paths available to your
@@ -155,6 +169,10 @@ rest of the pipeline.
 
 This still uses LiveKit's `noiseCancellation` slot as a temporary integration. RoomIO owns the
 chain and closes the processor, collector, and analyzer together.
+
+Analysis inference runs on a worker thread, so it never blocks the agent's event loop. If you own
+an `Analyzer` outside RoomIO, `analyzer.close()` returns a promise that resolves once any in-flight
+analysis has settled and the SDK session is released; awaiting it is optional.
 
 ## Configuration
 

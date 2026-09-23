@@ -268,6 +268,109 @@ async def test_records_failed_analysis_metrics(
 
 
 @pytest.mark.asyncio
+async def test_disabled_collector_pauses_analysis(
+    fake_sdk: tuple[FakeCollector, FakeNativeAnalyzer, list[int]],
+) -> None:
+    native_collector, native_analyzer, _ = fake_sdk
+    analyzer = Analyzer(
+        model=cast(aic_sdk.Model, FakeModel()),
+        license_key="test-license",
+        analysis_interval=0.01,
+    )
+    events: list[AnalysisEvent] = []
+    analyzer.on("analysis_result", events.append)
+    analyzer.collector._process(make_frame())
+
+    for _ in range(20):
+        if native_analyzer.analyze_calls:
+            break
+        await asyncio.sleep(0.005)
+    assert native_analyzer.analyze_calls >= 1
+
+    analyzer.collector.enabled = False
+    frame = make_frame()
+    assert analyzer.collector._process(frame) is frame
+    assert len(native_collector.blocks) == 1
+
+    # Let an analysis that was already in flight drain, then confirm no new ones start.
+    await asyncio.sleep(0.03)
+    calls_while_disabled = native_analyzer.analyze_calls
+    events_while_disabled = len(events)
+    await asyncio.sleep(0.06)
+    assert native_analyzer.analyze_calls == calls_while_disabled
+    assert len(events) == events_while_disabled
+
+    # Re-enabling drops the stale buffer and waits for fresh audio.
+    analyzer.collector.enabled = True
+    assert native_analyzer.reset_calls == 1
+    await asyncio.sleep(0.06)
+    assert native_analyzer.analyze_calls == calls_while_disabled
+
+    analyzer.collector._process(make_frame())
+    for _ in range(20):
+        if native_analyzer.analyze_calls > calls_while_disabled:
+            break
+        await asyncio.sleep(0.005)
+
+    await asyncio.wait_for(analyzer.aclose(), timeout=1.0)
+    assert native_analyzer.analyze_calls > calls_while_disabled
+    assert len(events) > events_while_disabled
+
+
+@pytest.mark.asyncio
+async def test_result_keeps_the_stream_it_was_collected_for(
+    fake_sdk: tuple[FakeCollector, FakeNativeAnalyzer, list[int]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, native_analyzer, _ = fake_sdk
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def gated(function: Callable[..., object], /, *args: object) -> object:
+        started.set()
+        await release.wait()
+        return function(*args)
+
+    monkeypatch.setattr("livekit.plugins.ai_coustics.analyzer.asyncio.to_thread", gated)
+
+    analyzer = Analyzer(
+        model=cast(aic_sdk.Model, FakeModel()),
+        license_key="test-license",
+        analysis_interval=0.01,
+    )
+    events: list[AnalysisEvent] = []
+    analyzer.on("analysis_result", events.append)
+    analyzer.collector._on_stream_info_updated(
+        room_name="room-a",
+        participant_identity="speaker-a",
+        publication_sid="TR_a",
+    )
+    analyzer.collector._process(make_frame())
+
+    await asyncio.wait_for(started.wait(), timeout=1.0)
+
+    # The stream switches while the analysis is still in flight.
+    analyzer.collector._on_stream_info_updated(
+        room_name="room-b",
+        participant_identity="speaker-b",
+        publication_sid="TR_b",
+    )
+    release.set()
+
+    for _ in range(20):
+        if events:
+            break
+        await asyncio.sleep(0.005)
+
+    await asyncio.wait_for(analyzer.aclose(), timeout=1.0)
+    assert native_analyzer.analyze_calls == 1
+    assert len(events) == 1
+    assert events[0].room_name == "room-a"
+    assert events[0].participant_identity == "speaker-a"
+    assert events[0].publication_sid == "TR_a"
+
+
+@pytest.mark.asyncio
 async def test_room_closing_collector_stops_analyzer(
     fake_sdk: tuple[FakeCollector, FakeNativeAnalyzer, list[int]],
 ) -> None:

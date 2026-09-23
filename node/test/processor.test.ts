@@ -86,10 +86,12 @@ const sdk = vi.hoisted(() => {
       return new FakeModel();
     }
 
-    static download(modelId: string, downloadDir: string): string {
+    static async download(modelId: string, downloadDir: string): Promise<string> {
       this.downloadCalls.push([modelId, downloadDir]);
       return `${downloadDir}/${modelId}.aicmodel`;
     }
+
+    dispose(): void {}
   }
 
   class FakeProcessor {
@@ -100,6 +102,7 @@ const sdk = vi.hoisted(() => {
     readonly blocks: number[][] = [];
     error: Error | null = null;
     terminateCalls = 0;
+    disposeCalls = 0;
 
     constructor() {
       if (FakeProcessor.constructorError) {
@@ -125,6 +128,10 @@ const sdk = vi.hoisted(() => {
 
     terminateSession(): void {
       this.terminateCalls += 1;
+    }
+
+    dispose(): void {
+      this.disposeCalls += 1;
     }
   }
 
@@ -442,6 +449,7 @@ describe("Processor", () => {
 
     enhancer.close();
     expect(processor.terminateCalls).toBe(1);
+    expect(processor.disposeCalls).toBe(1);
     expect(enhancer.process(frame)).toBe(frame);
     const summary = logging.calls.find(
       ({ message }) => message === "Processor: closed",
@@ -516,8 +524,8 @@ describe("Processor", () => {
     now.mockRestore();
   });
 
-  it("exposes SDK model download and file loading", () => {
-    const modelPath = Model.download(
+  it("exposes SDK model download and file loading", async () => {
+    const modelPath = await Model.download(
       "quail-vf-2.2-l-16khz",
       "/tmp/aic-test-models",
     );

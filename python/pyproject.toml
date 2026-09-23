@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-coustics-livekit-plugin"
-version = "0.1.0"
+version = "0.2.0"
 description = "ai-coustics noise cancellation for LiveKit Agents"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -13,7 +13,7 @@ license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "ai-coustics GmbH", email = "info@ai-coustics.com" }]
 keywords = ["ai-coustics", "audio", "livekit", "noise-cancellation", "speech"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
@@ -22,7 +22,7 @@ classifiers = [
   "Topic :: Multimedia :: Sound/Audio :: Speech",
 ]
 dependencies = [
-  "aic-sdk>=3.1.0,<4",
+  "aic-sdk>=3.2.0,<4",
   "livekit-agents>=1.4.2,<2",
   "numpy>=2.0.2",
   "opentelemetry-api>=1.14,<2",

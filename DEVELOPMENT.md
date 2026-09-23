@@ -16,7 +16,7 @@ process a throwaway frame to probe the license.
 
 Processor format initialization is lazy because LiveKit supplies the complete stream geometry
 with the first frame. Each LiveKit frame is processed in one fixed-size SDK call, avoiding the
-additional latency of the SDK's variable-block-size mode. aic-sdk 3.1 for Python and 0.23 for Node
+additional latency of the SDK's variable-block-size mode. aic-sdk 3.2 for Python and 0.24 for Node
 process mono audio only, so multichannel LiveKit frames are downmixed before processing and the
 enhanced signal is duplicated across the original channel count. This preserves the LiveKit frame
 geometry and metadata.
@@ -48,11 +48,18 @@ by LiveKit's streaming turn detector. Because the SDK hold uses a rolling-majori
 wrapper also keeps an active LiveKit speech segment open until that much continuous raw silence
 has accumulated. Explicit `VADParameters` values still take precedence.
 
-Each `Analyzer` owns one SDK collector/analyzer pair. Its public `collector` is a transparent
+Each `Analyzer` owns one SDK analysis instance: a collector/analyzer pair in Python, a single
+`Analyzer` carrying both halves in Node since aic-sdk 0.24. Its public `collector` is a transparent
 `FrameProcessor` installed in RoomIO's `noise_cancellation` slot: it lazily initializes from the
 first frame, downmixes PCM16 input to mono float32, buffers it, and returns the original frame
 unchanged. Stream boundaries reset the analyzer. Closing either the analyzer or its collector
 stops scheduling and terminates the SDK telemetry session.
+
+In Node, every component's `close()` follows its `terminateSession()` with the SDK's `dispose()`,
+releasing the native instance at a known point instead of leaving it to garbage collection.
+Disposal is idempotent, and any call on a disposed instance throws, so each `close()` clears its
+native references first and every `process()` guards on them. Python has no equivalent call and
+relies on the binding's own finalization.
 
 `FrameProcessorChain` forwards stream-info lifecycle hooks and applies any number of enabled
 processors in constructor order. It lets a `Processor`, VAD processor, and Collector share
@@ -61,8 +68,11 @@ is recommended: analyzing original input audio helps explain how its quality aff
 the pipeline.
 
 Python schedules inference with an asyncio task and runs each blocking `analyze_buffered()` call
-through `asyncio.to_thread()`. Shutdown waits for an active inference before terminating the SDK
-session. Node uses a timer around the SDK's synchronous `analyzeBuffered()` API. Both runtimes emit
+through `asyncio.to_thread()`. Node uses a timer around `analyzeAsync()`, which the SDK runs on a
+libuv worker thread; a tick that arrives while an analysis is still running is skipped rather than
+queued, and the skip is reported through a rate-limited warning. In both runtimes shutdown waits
+for an active inference before terminating the SDK session, because termination and disposal wait
+for the analyzer lock. Both runtimes emit
 a plugin-level result event after every successful scheduled call without logging the result by
 default. They also record aggregate score, inference-duration, and success/error count instruments
 through the process-wide OpenTelemetry metrics API; operational errors remain logged and fail-open
@@ -117,10 +127,11 @@ such as package metadata or an explicit package list. Until those pieces exist, 
 
 ### First-class streaming Analyzer integration
 
-The aic-sdk streaming analysis API is split into a `Collector` and an `Analyzer`. The collector
-accepts mono float32 audio synchronously and is safe to feed from the audio path, while
-`analyze_buffered()` / `analyzeBuffered()` runs an expensive model inference and must execute away
-from that path. The result contains risk, speaker reverb, speaker loudness, interfering speech,
+The aic-sdk streaming analysis API separates buffering from inference: Python splits it across a
+`Collector` and an `Analyzer`, Node carries both on one `Analyzer`. Buffering accepts mono float32
+audio synchronously, does not take the analyzer lock, and is safe to feed from the audio path,
+while `analyze_buffered()` / `analyzeAsync()` runs an expensive model inference and must execute
+away from that path. The result contains risk, speaker reverb, speaker loudness, interfering speech,
 noise, codec-degradation, and packet-loss scores. `FileAnalyzer` is intended for complete in-memory
 signals and is not appropriate for a live agent stream.
 
@@ -203,10 +214,10 @@ so `window_duration` must remain optional until aic-sdk provides it. If future a
 different context windows, that API will also avoid hard-coding the current five-second window.
 
 Python runs `analyze_buffered()` through `asyncio.to_thread()` because the binding releases the
-GIL during inference. Node aic-sdk 0.23 exposes only synchronous `analyzeBuffered()` and
-`terminateSession()`, so calling them from a timer would still block the agent's JavaScript event
-loop. A production Node integration first needs native asynchronous APIs such as
-`analyzeBufferedAsync()` and `terminateSessionAsync()` that execute on a worker pool.
+GIL during inference. Node uses the SDK's own `analyzeAsync()`, added in aic-sdk 0.24, which runs
+on a libuv worker thread. `terminateSession()` and `dispose()` remain synchronous and wait for the
+analyzer lock, so the Node `Analyzer.close()` returns a promise and releases the native instance
+only after any in-flight analysis has settled.
 
 ### First-class Processor metrics
 

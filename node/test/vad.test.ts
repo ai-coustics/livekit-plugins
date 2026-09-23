@@ -40,7 +40,7 @@ const sdk = vi.hoisted(() => {
       return this.detected;
     }
 
-    rawVadProbability(): number {
+    getRawVadProbability(): number {
       return this.probability;
     }
 
@@ -76,6 +76,8 @@ const sdk = vi.hoisted(() => {
     getOptimalBlockSize(sampleRate: number): number {
       return Math.round((this.blockSize * sampleRate) / this.sampleRate);
     }
+
+    dispose(): void {}
   }
 
   class FakeVad {
@@ -87,6 +89,7 @@ const sdk = vi.hoisted(() => {
     initializeError: Error | null = null;
     processError: Error | null = null;
     terminateCalls = 0;
+    disposeCalls = 0;
 
     constructor() {
       if (FakeVad.constructorError) throw FakeVad.constructorError;
@@ -114,6 +117,10 @@ const sdk = vi.hoisted(() => {
 
     terminateSession(): void {
       this.terminateCalls += 1;
+    }
+
+    dispose(): void {
+      this.disposeCalls += 1;
     }
   }
 
@@ -214,6 +221,7 @@ describe("VAD", () => {
 
     await vad.close();
     expect(native.terminateCalls).toBe(1);
+    expect(native.disposeCalls).toBe(1);
   });
 
   it("wraps native construction errors", () => {
