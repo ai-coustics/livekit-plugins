@@ -1,7 +1,7 @@
 # ai-coustics LiveKit plugin for Python
 
 > [!WARNING]
-> This package is deprecated and gets no further feature work. Use
+> This package is deprecated and will no longer be maintained. Use
 > [`ai-coustics-livekit-extras`](https://pypi.org/project/ai-coustics-livekit-extras/) for `VAD`,
 > `Analyzer`, and `FrameProcessorChain`. Use the official
 > [`livekit-plugins-ai-coustics`](https://pypi.org/project/livekit-plugins-ai-coustics/) package
