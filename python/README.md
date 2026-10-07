@@ -17,6 +17,9 @@
 > | `ai-coustics-livekit-plugin` | `ai-coustics-livekit-extras` |
 > | `livekit.plugins.ai_coustics` | `ai_coustics.livekit` |
 > | `Processor` | `livekit-plugins-ai-coustics` |
+>
+> For all steps, refer to the
+> [migration guide](https://docs.ai-coustics.com/reference/livekit/migrate-to-livekit-extras).
 
 Audio enhancement, voice activity detection, and audio-quality analysis for LiveKit Agents, backed by the public
 `aic-sdk` package.

@@ -17,6 +17,9 @@
 > | `@ai-coustics/livekit-plugin` | `@ai-coustics/livekit-extras` |
 > | `Processor` | `@livekit/plugins-ai-coustics` |
 > | `pcm16ToFloat32`, `float32ToPcm16` | Removed |
+>
+> For all steps, refer to the
+> [migration guide](https://docs.ai-coustics.com/reference/livekit/migrate-to-livekit-extras).
 
 Audio enhancement, voice activity detection, and audio-quality analysis for LiveKit Agents, backed by the public
 `@ai-coustics/aic-sdk` package.

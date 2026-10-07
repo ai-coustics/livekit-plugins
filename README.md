@@ -12,6 +12,9 @@
 > | `livekit.plugins.ai_coustics` | `ai_coustics.livekit` |
 > | `@ai-coustics/livekit-plugin` | `@ai-coustics/livekit-extras` |
 > | `Processor` | [`livekit-plugins-ai-coustics`](https://pypi.org/project/livekit-plugins-ai-coustics/) or [`@livekit/plugins-ai-coustics`](https://www.npmjs.com/package/@livekit/plugins-ai-coustics) |
+>
+> For all steps, refer to the
+> [migration guide](https://docs.ai-coustics.com/reference/livekit/migrate-to-livekit-extras).
 
 This repository contains the ai-coustics-maintained Python and Node.js integrations for
 [LiveKit Agents](https://docs.livekit.io/agents/). They are thin wrappers around the public
