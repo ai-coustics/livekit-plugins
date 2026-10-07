@@ -1,5 +1,18 @@
 # ai-coustics plugins for LiveKit Agents
 
+> [!WARNING]
+> This repository is deprecated and gets no further feature work. Use
+> [`ai-coustics/livekit-extras`](https://github.com/ai-coustics/livekit-extras) for `VAD`,
+> `Analyzer`, and `FrameProcessorChain`. Use the official LiveKit plugin for speech enhancement.
+> You can install the two packages together.
+>
+> | Old | New |
+> | --- | --- |
+> | `ai-coustics-livekit-plugin` | `ai-coustics-livekit-extras` |
+> | `livekit.plugins.ai_coustics` | `ai_coustics.livekit` |
+> | `@ai-coustics/livekit-plugin` | `@ai-coustics/livekit-extras` |
+> | `Processor` | [`livekit-plugins-ai-coustics`](https://pypi.org/project/livekit-plugins-ai-coustics/) or [`@livekit/plugins-ai-coustics`](https://www.npmjs.com/package/@livekit/plugins-ai-coustics) |
+
 This repository contains the ai-coustics-maintained Python and Node.js integrations for
 [LiveKit Agents](https://docs.livekit.io/agents/). They are thin wrappers around the public
 ai-coustics SDKs and let LiveKit agents use:

@@ -1,5 +1,23 @@
 # ai-coustics LiveKit plugin for Python
 
+> [!WARNING]
+> This package is deprecated and gets no further feature work. Use
+> [`ai-coustics-livekit-extras`](https://pypi.org/project/ai-coustics-livekit-extras/) for `VAD`,
+> `Analyzer`, and `FrameProcessorChain`. Use the official
+> [`livekit-plugins-ai-coustics`](https://pypi.org/project/livekit-plugins-ai-coustics/) package
+> for speech enhancement. You can install the two packages together:
+>
+> ```bash
+> pip uninstall ai-coustics-livekit-plugin
+> pip install livekit-plugins-ai-coustics ai-coustics-livekit-extras
+> ```
+>
+> | Old | New |
+> | --- | --- |
+> | `ai-coustics-livekit-plugin` | `ai-coustics-livekit-extras` |
+> | `livekit.plugins.ai_coustics` | `ai_coustics.livekit` |
+> | `Processor` | `livekit-plugins-ai-coustics` |
+
 Audio enhancement, voice activity detection, and audio-quality analysis for LiveKit Agents, backed by the public
 `aic-sdk` package.
 
