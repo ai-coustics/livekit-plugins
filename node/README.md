@@ -1,5 +1,26 @@
 # ai-coustics LiveKit plugin for Node.js
 
+> [!WARNING]
+> This package is deprecated and will no longer be maintained. Use
+> [`@ai-coustics/livekit-extras`](https://www.npmjs.com/package/@ai-coustics/livekit-extras) for
+> `VAD`, `Analyzer`, and `FrameProcessorChain`. Use the official
+> [`@livekit/plugins-ai-coustics`](https://www.npmjs.com/package/@livekit/plugins-ai-coustics)
+> package for speech enhancement. You can install the two packages together:
+>
+> ```bash
+> npm uninstall @ai-coustics/livekit-plugin
+> npm install @livekit/plugins-ai-coustics @ai-coustics/livekit-extras
+> ```
+>
+> | Old | New |
+> | --- | --- |
+> | `@ai-coustics/livekit-plugin` | `@ai-coustics/livekit-extras` |
+> | `Processor` | `@livekit/plugins-ai-coustics` |
+> | `pcm16ToFloat32`, `float32ToPcm16` | Removed |
+>
+> For all steps, refer to the
+> [migration guide](https://docs.ai-coustics.com/reference/livekit/migrate-to-livekit-extras).
+
 Audio enhancement, voice activity detection, and audio-quality analysis for LiveKit Agents, backed by the public
 `@ai-coustics/aic-sdk` package.
 

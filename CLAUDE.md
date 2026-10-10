@@ -7,14 +7,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Two independently built packages that are functional mirrors of each other:
 
 - `python/` — `ai-coustics-livekit-plugin`, importable as `livekit.plugins.ai_coustics` (namespace
-  package under `python/src/livekit/plugins/ai_coustics/`), built on `aic-sdk` 3.2.
-- `node/` — `@ai-coustics/livekit-plugin` (`node/src/`), built on `@ai-coustics/aic-sdk` 0.24.
+  package under `python/src/livekit/plugins/ai_coustics/`), built on `aic-sdk` 3.3.
+- `node/` — `@ai-coustics/livekit-plugin` (`node/src/`), built on `@ai-coustics/aic-sdk` 0.25.
 
 Run all commands from inside `python/` or `node/`; there is no root-level build. The two packages
 are released in lockstep and must always carry the same version. Their SDK pins must resolve to the
 same ai-coustics native core, which the bindings report through `get_sdk_version()` / `getVersion()`
-rather than through their own package version: `aic-sdk` 3.2 for Python and 0.24 for Node both wrap
-core 0.24.
+rather than through their own package version: `aic-sdk` 3.3 for Python and 0.25 for Node both wrap
+core 0.25.
 
 `DEVELOPMENT.md` is the authoritative long-form document for architecture rationale, the logging
 convention, the local end-to-end environment, release steps, and the planned upstream LiveKit
@@ -91,7 +91,7 @@ Four public objects, each mirrored across both runtimes:
 
 `ProcessorContext` wraps the SDK context purely to add structured logging around parameter and
 bearer-token changes. Node's `sdk.ts` is a thin re-export boundary over the declarations aic-sdk
-0.24 ships; it only hand-mirrors `ProcessorParameter` and `VadParameter`, which are declared as
+0.25 ships; it only hand-mirrors `ProcessorParameter` and `VadParameter`, which are declared as
 `const enum`s that TypeScript treats as compile-time-only, so the plugin owns the runtime objects
 it re-exports rather than leaning on declarations a bundler may erase.
 

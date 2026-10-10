@@ -1,3 +1,4 @@
+import warnings
 from importlib.metadata import PackageNotFoundError, version
 
 from aic_sdk import Model, ProcessorParameter
@@ -22,6 +23,15 @@ class AICousticsPlugin(Plugin):
 
 
 Plugin.register_plugin(AICousticsPlugin())
+
+# Python hides a DeprecationWarning from an import by default. A FutureWarning is visible.
+warnings.warn(
+    "ai-coustics-livekit-plugin is deprecated. Use ai-coustics-livekit-extras for VAD and "
+    "Analyzer, and livekit-plugins-ai-coustics for speech enhancement. Migration guide: "
+    "https://docs.ai-coustics.com/reference/livekit/migrate-to-livekit-extras",
+    FutureWarning,
+    stacklevel=2,
+)
 
 __all__ = [
     "AICousticsPlugin",

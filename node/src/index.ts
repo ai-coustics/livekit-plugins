@@ -19,3 +19,10 @@ export {
 } from "./processor.js";
 export { ProcessorContext } from "./processor_context.js";
 export { VAD, type VADOptions, type VADParameters, VADProcessor } from "./vad.js";
+
+process.emitWarning(
+  "@ai-coustics/livekit-plugin is deprecated. Use @ai-coustics/livekit-extras for VAD and " +
+    "Analyzer, and @livekit/plugins-ai-coustics for speech enhancement. Migration guide: " +
+    "https://docs.ai-coustics.com/reference/livekit/migrate-to-livekit-extras",
+  { type: "DeprecationWarning", code: "AIC_LIVEKIT_PLUGIN_DEPRECATED" },
+);
